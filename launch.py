@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,7 @@ def ensure_directories(repo_root: Path) -> None:
 def main() -> int:
     repo_root = Path(__file__).resolve().parent
     run_script = repo_root / "run.py"
+    src_root = repo_root / "src"
 
     if not run_script.is_file():
         print(f"Error: could not find {run_script}", file=sys.stderr)
@@ -43,10 +45,17 @@ def main() -> int:
 
     ensure_directories(repo_root)
 
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        env["PYTHONPATH"] = f"{src_root}{os.pathsep}{existing_pythonpath}"
+    else:
+        env["PYTHONPATH"] = str(src_root)
+
     command = [sys.executable, str(run_script), *sys.argv[1:]]
 
     try:
-        completed = subprocess.run(command, cwd=repo_root)
+        completed = subprocess.run(command, cwd=repo_root, env=env)
         return completed.returncode
     except KeyboardInterrupt:
         print("\nExecution interrupted by user.", file=sys.stderr)
