@@ -14,6 +14,7 @@ from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
 from carom.validation import first_success_event_index
+from carom.validation import first_success_event_index
 
 
 BALL_COLORS = {
