@@ -1,4 +1,0 @@
-ball,initial_position_xy_m,initial_position_ij,initial_velocity_xy_mps,initial_velocity_ij,initial_momentum_ij_kgmps,final_position_xy_m,final_position_ij,final_velocity_xy_mps,final_velocity_ij,final_momentum_ij_kgmps,mass_kg
-A,"(0.2290, 0.5216)",r = 0.229 i + 0.5216 j,"(0.0000, 0.0000)",v = 0.0 i,p = 0.0 i,"(0.1055, 0.2454)",r = 0.1055 i + 0.2454 j,"(-1.0593, 6.0499)",v = -1.0593 i + 6.0499 j,p = -0.2225 i + 1.2705 j,0.210000
-B,"(0.2998, 1.3004)",r = 0.2998 i + 1.3004 j,"(0.0000, 0.0000)",v = 0.0 i,p = 0.0 i,"(0.7988, 1.1849)",r = 0.7988 i + 1.1849 j,"(3.5193, -0.3920)",v = 3.5193 i - 0.392 j,p = 0.7391 i - 0.0823 j,0.210000
-C,"(0.7625, 0.7600)",r = 0.7625 i + 0.76 j,"(-4.2006, 5.7241)",v = -4.2006 i + 5.7241 j,p = -0.8821 i + 1.2021 j,"(0.2837, 0.5745)",r = 0.2837 i + 0.5745 j,"(0.3781, -0.0662)",v = 0.3781 i - 0.0662 j,p = 0.0794 i - 0.0139 j,0.210000

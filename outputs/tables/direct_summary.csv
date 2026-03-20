@@ -1,2 +1,0 @@
-success,classification,termination_reason,cue_contacts,cue_hit_both,A_wall_hits,B_wall_hits,C_wall_hits,all_balls_hit_wall,event_count,final_time_s
-True,direct,post_success_extension_complete,"A,B",True,1,1,1,True,5,0.531131911666917
