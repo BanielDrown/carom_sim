@@ -9,9 +9,11 @@ from pathlib import Path
 import matplotlib.animation as mpl_animation
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, Rectangle
+from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
 
-from carom.state import SimulationResult, Table, TrajectorySample
+from carom.physics import wall_normal_from_name
+from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
+from carom.validation import first_success_event_index
 
 
 BALL_COLORS = {
@@ -20,32 +22,15 @@ BALL_COLORS = {
     "C": "black",
 }
 
+VECTOR_EPS = 1e-12
+
 
 def _assignment_cutoff_index(result: SimulationResult) -> int:
     """
     Return the event index at which the assignment success condition is first met.
     If never met, return the full event count.
     """
-    cue_contacts: set[str] = set()
-    wall_hits = {"A": 0, "B": 0, "C": 0}
-
-    for i, event in enumerate(result.events, start=1):
-        if event.event_type == "ball-ball":
-            a, b = event.actors
-            if "C" in (a, b):
-                other = b if a == "C" else a
-                if other in ("A", "B"):
-                    cue_contacts.add(other)
-
-        elif event.event_type == "ball-wall":
-            ball_label, _wall = event.actors
-            if ball_label in wall_hits:
-                wall_hits[ball_label] += 1
-
-        if cue_contacts == {"A", "B"} and all(wall_hits[label] >= 1 for label in ("A", "B", "C")):
-            return i
-
-    return len(result.events)
+    return first_success_event_index(result.events) or len(result.events)
 
 
 def _relevant_end_time(
@@ -229,6 +214,41 @@ def _impulse_scale(
     return max_arrow_length / jmax
 
 
+def _event_anchor_position(
+    result: SimulationResult,
+    event: CollisionEvent,
+) -> np.ndarray:
+    """
+    Return the physical point where a collision vector should be drawn.
+    """
+    if event.event_type != "ball-wall":
+        return event.position
+
+    ball_label, wall_name = event.actors
+    radius = result.initial_state.balls[ball_label].radius
+    return event.position - radius * wall_normal_from_name(wall_name)
+
+
+def _representative_impulse_vector(
+    event: CollisionEvent,
+) -> tuple[str, np.ndarray] | None:
+    """
+    Pick one authoritative impulse vector per collision for visualization.
+    """
+    if not event.impulse_vectors:
+        return None
+
+    if event.event_type == "ball-wall":
+        ball_label, _wall_name = event.actors
+        impulse_vec = event.impulse_vectors.get(ball_label)
+        if impulse_vec is None:
+            return None
+        return ball_label, impulse_vec
+
+    label = sorted(event.impulse_vectors.keys())[0]
+    return label, event.impulse_vectors[label]
+
+
 def _velocity_at_time(
     result: SimulationResult,
     label: str,
@@ -267,28 +287,27 @@ def _draw_momentum_arrow(
     """
     momentum = mass * velocity
     mag = float(np.linalg.norm(momentum))
-    if mag <= 1e-12 or scale <= 0.0:
+    if mag <= VECTOR_EPS or scale <= 0.0:
         return None
 
     direction = momentum / mag
-    tail = origin - 0.35 * radius * direction
+    tail = origin - 0.45 * radius * direction
 
     dx = scale * float(momentum[0])
     dy = scale * float(momentum[1])
 
-    return ax.arrow(
-        float(tail[0]),
-        float(tail[1]),
-        dx,
-        dy,
-        length_includes_head=True,
-        head_width=0.025,
-        head_length=0.04,
-        linewidth=1.8,
+    arrow = FancyArrowPatch(
+        posA=(float(tail[0]), float(tail[1])),
+        posB=(float(tail[0] + dx), float(tail[1] + dy)),
+        arrowstyle="-|>",
+        mutation_scale=14,
+        linewidth=2.0,
         color=color,
-        alpha=0.9,
+        alpha=0.92,
         zorder=5,
     )
+    ax.add_patch(arrow)
+    return arrow
 
 
 def _draw_impulse_pair(
@@ -302,7 +321,7 @@ def _draw_impulse_pair(
     Draw equal and opposite impulse arrows centered at the collision point.
     """
     mag = float(np.linalg.norm(impulse_vec))
-    if mag <= 1e-12 or scale <= 0.0:
+    if mag <= VECTOR_EPS or scale <= 0.0:
         return []
 
     half = scale * impulse_vec
@@ -310,35 +329,22 @@ def _draw_impulse_pair(
     start1 = position - 0.5 * half
     start2 = position + 0.5 * half
 
-    a1 = ax.arrow(
-        float(start1[0]),
-        float(start1[1]),
-        float(half[0]),
-        float(half[1]),
-        length_includes_head=True,
-        head_width=0.02,
-        head_length=0.03,
-        color=color,
-        linewidth=1.8,
-        alpha=0.85,
-        zorder=8,
-    )
+    arrows = []
+    for tail, delta in ((start1, half), (start2, -half)):
+        arrow = FancyArrowPatch(
+            posA=(float(tail[0]), float(tail[1])),
+            posB=(float(tail[0] + delta[0]), float(tail[1] + delta[1])),
+            arrowstyle="-|>",
+            mutation_scale=12,
+            color=color,
+            linewidth=2.0,
+            alpha=0.88,
+            zorder=8,
+        )
+        ax.add_patch(arrow)
+        arrows.append(arrow)
 
-    a2 = ax.arrow(
-        float(start2[0]),
-        float(start2[1]),
-        float(-half[0]),
-        float(-half[1]),
-        length_includes_head=True,
-        head_width=0.02,
-        head_length=0.03,
-        color=color,
-        linewidth=1.8,
-        alpha=0.85,
-        zorder=8,
-    )
-
-    return [a1, a2]
+    return arrows
 
 
 def animate_trajectory(
@@ -402,6 +408,7 @@ def animate_trajectory(
     ax.set_title("Carom Simulation Animation")
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
+    ax.set_facecolor("#fbf8ef")
 
     table_patch = Rectangle(
         (0.0, 0.0),
@@ -455,19 +462,23 @@ def animate_trajectory(
             if event.time > display_end_time:
                 continue
 
+            representative_impulse = _representative_impulse_vector(event)
+            if representative_impulse is None:
+                continue
+
+            label, impulse_vec = representative_impulse
             event_artists = []
-            for label, impulse_vec in event.impulse_vectors.items():
-                color = BALL_COLORS.get(label, "gray")
-                new_artists = _draw_impulse_pair(
-                    ax=ax,
-                    position=event.position,
-                    impulse_vec=impulse_vec,
-                    color=color,
-                    scale=jscale,
-                )
-                for artist in new_artists:
-                    artist.set_visible(False)
-                event_artists.extend(new_artists)
+            color = BALL_COLORS.get(label, "gray")
+            new_artists = _draw_impulse_pair(
+                ax=ax,
+                position=_event_anchor_position(result, event),
+                impulse_vec=impulse_vec,
+                color=color,
+                scale=jscale,
+            )
+            for artist in new_artists:
+                artist.set_visible(False)
+            event_artists.extend(new_artists)
 
             impulse_events.append(event)
             impulse_artists_by_event.append(event_artists)

@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import FancyArrowPatch, Rectangle
 
-from carom.state import SimulationResult, Table, TrajectorySample
+from carom.physics import wall_normal_from_name
+from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
+from carom.validation import first_success_event_index
 
 
 BALL_COLORS = {
@@ -22,32 +25,15 @@ BALL_NAMES = {
     "C": "Cue Ball C",
 }
 
+VECTOR_EPS = 1e-12
+
 
 def _relevant_event_cutoff(result: SimulationResult) -> int:
     """
     Return the event index where the assignment success condition is first met.
     If never met, return the full event count.
     """
-    cue_contacts: set[str] = set()
-    wall_hits = {"A": 0, "B": 0, "C": 0}
-
-    for i, event in enumerate(result.events, start=1):
-        if event.event_type == "ball-ball":
-            a, b = event.actors
-            if "C" in (a, b):
-                other = b if a == "C" else a
-                if other in ("A", "B"):
-                    cue_contacts.add(other)
-
-        elif event.event_type == "ball-wall":
-            ball_label, _wall = event.actors
-            if ball_label in wall_hits:
-                wall_hits[ball_label] += 1
-
-        if cue_contacts == {"A", "B"} and all(wall_hits[k] >= 1 for k in ("A", "B", "C")):
-            return i
-
-    return len(result.events)
+    return first_success_event_index(result.events) or len(result.events)
 
 
 def _relevant_end_time(
@@ -145,6 +131,49 @@ def _build_ball_paths(trajectory: list[TrajectorySample]) -> dict[str, np.ndarra
     return {label: np.array(path) for label, path in ball_paths.items()}
 
 
+def _event_anchor_position(
+    result: SimulationResult,
+    event: CollisionEvent,
+) -> np.ndarray:
+    """
+    Return the physical point where a collision vector should be drawn.
+
+    Ball-ball events already store the contact point. Ball-wall events store
+    the ball center, so shift by one radius along the inward wall normal to
+    recover the cushion contact point.
+    """
+    if event.event_type != "ball-wall":
+        return event.position
+
+    ball_label, wall_name = event.actors
+    radius = result.initial_state.balls[ball_label].radius
+    return event.position - radius * wall_normal_from_name(wall_name)
+
+
+def _representative_impulse_vector(
+    event: CollisionEvent,
+) -> tuple[str, np.ndarray] | None:
+    """
+    Pick one authoritative impulse vector per event for visualization.
+
+    Ball-ball events store equal-and-opposite vectors for both balls, so one is
+    sufficient and avoids drawing the same pair twice. Ball-wall events only
+    have a single ball-side impulse vector.
+    """
+    if not event.impulse_vectors:
+        return None
+
+    if event.event_type == "ball-wall":
+        ball_label, _wall_name = event.actors
+        impulse_vec = event.impulse_vectors.get(ball_label)
+        if impulse_vec is None:
+            return None
+        return ball_label, impulse_vec
+
+    label = sorted(event.impulse_vectors.keys())[0]
+    return label, event.impulse_vectors[label]
+
+
 def _impulse_scale(
     events: list,
     table: Table,
@@ -181,7 +210,7 @@ def _draw_impulse_pair(
     Draw equal and opposite impulse arrows centered at the collision point.
     """
     mag = float(np.linalg.norm(impulse_vec))
-    if mag <= 1e-12 or scale <= 0.0:
+    if mag <= VECTOR_EPS or scale <= 0.0:
         return
 
     half = scale * impulse_vec
@@ -189,33 +218,18 @@ def _draw_impulse_pair(
     start1 = position - 0.5 * half
     start2 = position + 0.5 * half
 
-    ax.arrow(
-        float(start1[0]),
-        float(start1[1]),
-        float(half[0]),
-        float(half[1]),
-        length_includes_head=True,
-        head_width=0.02,
-        head_length=0.03,
-        linewidth=1.4,
-        color=color,
-        alpha=0.85,
-        zorder=7,
-    )
-
-    ax.arrow(
-        float(start2[0]),
-        float(start2[1]),
-        float(-half[0]),
-        float(-half[1]),
-        length_includes_head=True,
-        head_width=0.02,
-        head_length=0.03,
-        linewidth=1.4,
-        color=color,
-        alpha=0.85,
-        zorder=7,
-    )
+    for tail, delta in ((start1, half), (start2, -half)):
+        arrow = FancyArrowPatch(
+            posA=(float(tail[0]), float(tail[1])),
+            posB=(float(tail[0] + delta[0]), float(tail[1] + delta[1])),
+            arrowstyle="-|>",
+            mutation_scale=12,
+            linewidth=1.8,
+            color=color,
+            alpha=0.90,
+            zorder=7,
+        )
+        ax.add_patch(arrow)
 
 
 def plot_trajectories(
@@ -247,6 +261,7 @@ def plot_trajectories(
     del show_impulse_vectors
 
     fig, ax = plt.subplots(figsize=(12, 6))
+    radius = result.initial_state.balls["C"].radius
 
     ax.set_xlim(0.0, table.length)
     ax.set_ylim(0.0, table.width)
@@ -254,6 +269,18 @@ def plot_trajectories(
     ax.set_title("Carom Simulation Trajectories")
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
+    ax.set_facecolor("#fbf8ef")
+
+    table_patch = Rectangle(
+        (0.0, 0.0),
+        table.length,
+        table.width,
+        linewidth=2.0,
+        edgecolor="#444444",
+        facecolor="none",
+        zorder=0,
+    )
+    ax.add_patch(table_patch)
 
     t_limit = _relevant_end_time(
         result=result,
@@ -280,14 +307,17 @@ def plot_trajectories(
             continue
 
         color = BALL_COLORS.get(label, "gray")
-        line_width = 2.5 if label == "C" else 1.8
+        line_width = 2.8 if label == "C" else 2.0
+        line_style = "-" if label == "C" else "--"
+        label_offset = 0.85 * radius
 
         ax.plot(
             path_array[:, 0],
             path_array[:, 1],
-            linestyle="--",
+            linestyle=line_style,
             linewidth=line_width,
             color=color,
+            alpha=0.92,
             label=BALL_NAMES.get(label, label),
             zorder=1,
         )
@@ -306,8 +336,8 @@ def plot_trajectories(
             zorder=4,
         )
         ax.text(
-            float(start[0] + 0.02),
-            float(start[1] + 0.02),
+            float(start[0] + label_offset),
+            float(start[1] + label_offset),
             label,
             color=color,
             fontsize=10,
@@ -319,16 +349,17 @@ def plot_trajectories(
             end[0],
             end[1],
             s=220,
+            facecolors="white",
             color=color,
             edgecolors="black",
-            linewidths=0.9,
+            linewidths=1.8,
             marker="o",
-            alpha=0.85,
+            alpha=0.95,
             zorder=4,
         )
         ax.text(
-            float(end[0] + 0.02),
-            float(end[1] + 0.02),
+            float(end[0] + label_offset),
+            float(end[1] + label_offset),
             f"{label}'",
             color=color,
             fontsize=10,
@@ -346,28 +377,41 @@ def plot_trajectories(
         )
 
         for event in plotted_events:
+            anchor_position = _event_anchor_position(result, event)
+
             if event.event_type != "ball-ball":
-                if debug:
-                    ax.scatter(
-                        event.position[0],
-                        event.position[1],
-                        color="orange",
-                        s=18,
-                        zorder=3,
-                    )
+                ax.scatter(
+                    anchor_position[0],
+                    anchor_position[1],
+                    color="#ffb347",
+                    edgecolors="black",
+                    linewidths=0.5,
+                    marker="s",
+                    s=24 if debug else 18,
+                    zorder=3,
+                )
                 continue
 
             collision_index += 1
-            x, y = event.position
+            x, y = anchor_position
 
             # Draw one impulse-pair per collision to avoid duplicate overlays.
-            if event.impulse_vectors and impulse_scale > 0.0:
-                first_label = sorted(event.impulse_vectors.keys())[0]
-                impulse_vec = event.impulse_vectors[first_label]
+            representative_impulse = _representative_impulse_vector(event)
+            ax.scatter(
+                x,
+                y,
+                color="white",
+                edgecolors="black",
+                linewidths=0.8,
+                s=28,
+                zorder=6,
+            )
+            if representative_impulse is not None and impulse_scale > 0.0:
+                first_label, impulse_vec = representative_impulse
 
                 _draw_impulse_pair(
                     ax=ax,
-                    position=event.position,
+                    position=anchor_position,
                     impulse_vec=impulse_vec,
                     color=BALL_COLORS.get(first_label, "green"),
                     scale=impulse_scale,
@@ -429,8 +473,8 @@ def plot_trajectories(
             va="top",
         )
 
-    ax.grid(True, alpha=0.30)
-    ax.legend(loc="upper left")
+    ax.grid(True, alpha=0.18, linestyle=":")
+    ax.legend(loc="upper left", framealpha=0.95)
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
