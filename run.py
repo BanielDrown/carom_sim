@@ -10,7 +10,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from carom.animation import animate_trajectory
+from carom.animation import animate_trajectory, export_animation_frame_snapshots
 from carom.constants import C_START_X_M, C_START_Y_M
 from carom.io_utils import (
     format_impulse_vector,
@@ -209,6 +209,17 @@ def export_case(case_name: str, result, trajectory, table: Table) -> None:
             duration_s=ANIMATION_DURATION_S,
             show_momentum_arrows=True,
             show_impulse_pairs=True,
+            post_end_fraction=POST_SUCCESS_FRACTION,
+        )
+        export_animation_frame_snapshots(
+            result=result,
+            trajectory=trajectory,
+            table=table,
+            save_path=str(plot_dir / "table_trajectories_animation_frames.png"),
+            relevant_only=PLOT_RELEVANT_ONLY,
+            max_events_to_include=None,
+            fps=ANIMATION_FPS,
+            duration_s=ANIMATION_DURATION_S,
             post_end_fraction=POST_SUCCESS_FRACTION,
         )
     except Exception as exc:

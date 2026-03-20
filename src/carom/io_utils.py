@@ -69,6 +69,33 @@ def format_vector_ij(v: np.ndarray, precision: int = 4) -> str:
     return f"{x} i {sign} {abs(y)} j"
 
 
+def format_vector_sum(
+    v: np.ndarray | None,
+    basis_a: str,
+    basis_b: str,
+    precision: int = 4,
+) -> str:
+    """
+    Format a 2D vector using only its final sum form in the requested basis.
+    """
+    if v is None:
+        return ""
+
+    a = round(float(v[0]), precision)
+    b = round(float(v[1]), precision)
+
+    if abs(a) < 10 ** (-precision):
+        a = 0.0
+    if abs(b) < 10 ** (-precision):
+        b = 0.0
+
+    if b == 0.0:
+        return f"{a} {basis_a}"
+
+    sign = "+" if b >= 0 else "-"
+    return f"{a} {basis_a} {sign} {abs(b)} {basis_b}"
+
+
 def format_component(value: float, basis: str, precision: int = 4) -> str:
     """
     Format one scalar basis-vector component such as 1.25 i or -0.75 j.
@@ -116,22 +143,10 @@ def format_unit_vector_nt(
     """
     Format a collision-frame unit vector in n,t notation.
     """
-    if v is None:
+    value = format_vector_sum(v, "n", "t", precision)
+    if not value:
         return ""
-
-    n_component = round(float(v[0]), precision)
-    t_component = round(float(v[1]), precision)
-
-    if abs(n_component) < 10 ** (-precision):
-        n_component = 0.0
-    if abs(t_component) < 10 ** (-precision):
-        t_component = 0.0
-
-    if t_component == 0.0:
-        return f"{prefix} = {n_component} n"
-
-    sign = "+" if t_component >= 0 else "-"
-    return f"{prefix} = {n_component} n {sign} {abs(t_component)} t"
+    return f"{prefix} = {value}"
 
 
 def format_force_vector_from_impulse(
@@ -170,6 +185,22 @@ def serialize_vector_map_ij(
     """
     parts = [
         f"{label}: {prefix} = {format_vector_ij(vec, precision)}"
+        for label, vec in sorted(vector_map.items())
+    ]
+    return "; ".join(parts)
+
+
+def serialize_vector_map_sum(
+    vector_map: dict[str, np.ndarray],
+    basis_a: str,
+    basis_b: str,
+    precision: int = 4,
+) -> str:
+    """
+    Serialize a mapping of labels to vectors using only the final sum form.
+    """
+    parts = [
+        f"{label}: {format_vector_sum(vec, basis_a, basis_b, precision)}"
         for label, vec in sorted(vector_map.items())
     ]
     return "; ".join(parts)
@@ -313,11 +344,7 @@ def export_initial_conditions_csv(
         writer.writerow([
             "ball_label",
             "mass_kg",
-            "initial_position_i_m",
-            "initial_position_j_m",
             "initial_position_vector_ij",
-            "initial_velocity_i_mps",
-            "initial_velocity_j_mps",
             "initial_velocity_vector_ij",
             "initial_speed_mps",
             "initial_momentum_vector_ij_kgmps",
@@ -328,14 +355,10 @@ def export_initial_conditions_csv(
             writer.writerow([
                 label,
                 format_scalar(ball.mass, 6),
-                format_scalar(ball.position[0], precision),
-                format_scalar(ball.position[1], precision),
-                format_position_vector(ball.position, precision),
-                format_scalar(ball.velocity[0], precision),
-                format_scalar(ball.velocity[1], precision),
-                format_velocity_vector(ball.velocity, precision),
+                format_vector_sum(ball.position, "i", "j", precision),
+                format_vector_sum(ball.velocity, "i", "j", precision),
                 format_scalar(_speed(ball.velocity), precision),
-                format_momentum_vector(ball.velocity, ball.mass, precision),
+                format_vector_sum(ball.mass * ball.velocity, "i", "j", precision),
             ])
 
 
@@ -358,14 +381,8 @@ def export_event_table_csv(
             "event_type",
             "actor_1",
             "actor_2",
-            "collision_position_i_m",
-            "collision_position_j_m",
             "collision_position_vector_ij",
-            "collision_normal_i",
-            "collision_normal_j",
             "collision_normal_vector_nt",
-            "collision_tangent_i",
-            "collision_tangent_j",
             "collision_tangent_vector_nt",
             "impulse_magnitude_Ns",
             "pre_collision_velocities_ij_mps",
@@ -381,20 +398,22 @@ def export_event_table_csv(
                 event.event_type,
                 event.actors[0],
                 event.actors[1],
-                format_scalar(event.position[0], precision),
-                format_scalar(event.position[1], precision),
-                format_position_vector(event.position, precision),
-                "" if event.collision_normal is None else format_scalar(event.collision_normal[0], precision),
-                "" if event.collision_normal is None else format_scalar(event.collision_normal[1], precision),
+                format_vector_sum(event.position, "i", "j", precision),
                 format_unit_vector_nt(event.collision_normal, "n_hat", precision),
-                "" if event.collision_tangent is None else format_scalar(event.collision_tangent[0], precision),
-                "" if event.collision_tangent is None else format_scalar(event.collision_tangent[1], precision),
                 format_unit_vector_nt(event.collision_tangent, "t_hat", precision),
                 "" if event.impulse is None else format_scalar(event.impulse, 6),
-                serialize_vector_map_ij(event.pre_velocities, "v", precision),
-                serialize_vector_map_ij(event.post_velocities, "v", precision),
-                serialize_vector_map_ij(event.impulse_vectors, "J", precision),
-                serialize_force_map_ij(event.impulse_vectors, precision),
+                serialize_vector_map_sum(event.pre_velocities, "i", "j", precision),
+                serialize_vector_map_sum(event.post_velocities, "i", "j", precision),
+                serialize_vector_map_sum(event.impulse_vectors, "i", "j", precision),
+                serialize_vector_map_sum(
+                    {
+                        label: impulse_vec / CONTACT_DURATION_S
+                        for label, impulse_vec in event.impulse_vectors.items()
+                    },
+                    "i",
+                    "j",
+                    precision,
+                ),
             ])
 
 
@@ -414,15 +433,11 @@ def export_state_summary_csv(
         writer.writerow([
             "ball_label",
             "mass_kg",
-            "initial_position_i_m",
-            "initial_position_j_m",
-            "initial_velocity_i_mps",
-            "initial_velocity_j_mps",
+            "initial_position_vector_ij",
+            "initial_velocity_vector_ij",
             "initial_speed_mps",
-            "final_position_i_m",
-            "final_position_j_m",
-            "final_velocity_i_mps",
-            "final_velocity_j_mps",
+            "final_position_vector_ij",
+            "final_velocity_vector_ij",
             "final_speed_mps",
             "initial_momentum_vector_ij_kgmps",
             "final_momentum_vector_ij_kgmps",
@@ -435,18 +450,14 @@ def export_state_summary_csv(
             writer.writerow([
                 label,
                 format_scalar(initial_ball.mass, 6),
-                format_scalar(initial_ball.position[0], precision),
-                format_scalar(initial_ball.position[1], precision),
-                format_scalar(initial_ball.velocity[0], precision),
-                format_scalar(initial_ball.velocity[1], precision),
+                format_vector_sum(initial_ball.position, "i", "j", precision),
+                format_vector_sum(initial_ball.velocity, "i", "j", precision),
                 format_scalar(_speed(initial_ball.velocity), precision),
-                format_scalar(final_ball.position[0], precision),
-                format_scalar(final_ball.position[1], precision),
-                format_scalar(final_ball.velocity[0], precision),
-                format_scalar(final_ball.velocity[1], precision),
+                format_vector_sum(final_ball.position, "i", "j", precision),
+                format_vector_sum(final_ball.velocity, "i", "j", precision),
                 format_scalar(_speed(final_ball.velocity), precision),
-                format_momentum_vector(initial_ball.velocity, initial_ball.mass, precision),
-                format_momentum_vector(final_ball.velocity, final_ball.mass, precision),
+                format_vector_sum(initial_ball.mass * initial_ball.velocity, "i", "j", precision),
+                format_vector_sum(final_ball.mass * final_ball.velocity, "i", "j", precision),
             ])
 
 
@@ -472,20 +483,13 @@ def export_motion_intervals_csv(
             "time_start_s",
             "time_end_s",
             "duration_s",
-            "start_position_i_m",
-            "start_position_j_m",
-            "end_position_i_m",
-            "end_position_j_m",
-            "velocity_i_mps",
-            "velocity_j_mps",
+            "start_position_vector_ij",
+            "end_position_vector_ij",
+            "velocity_vector_ij",
             "speed_mps",
             "path_displacement_start_m",
             "path_displacement_end_m",
-            "r_i_of_t_equation",
-            "r_j_of_t_equation",
             "position_vector_equation_ij",
-            "v_i_of_t_equation",
-            "v_j_of_t_equation",
             "velocity_vector_equation_ij",
             "speed_of_t_equation",
             "speed_of_displacement_equation",
@@ -503,37 +507,18 @@ def export_motion_intervals_csv(
                     format_scalar(interval.start_time, 6),
                     format_scalar(interval.end_time, 6),
                     format_scalar(interval.duration, 6),
-                    format_scalar(start_position[0], precision),
-                    format_scalar(start_position[1], precision),
-                    format_scalar(end_position[0], precision),
-                    format_scalar(end_position[1], precision),
-                    format_scalar(velocity[0], precision),
-                    format_scalar(velocity[1], precision),
+                    format_vector_sum(start_position, "i", "j", precision),
+                    format_vector_sum(end_position, "i", "j", precision),
+                    format_vector_sum(velocity, "i", "j", precision),
                     format_scalar(speed, precision),
                     format_scalar(interval.displacement_start[label], precision),
                     format_scalar(interval.displacement_end[label], precision),
-                    _coordinate_equation(
-                        "r_i",
-                        start_position[0],
-                        velocity[0],
-                        interval.start_time,
-                        precision,
-                    ),
-                    _coordinate_equation(
-                        "r_j",
-                        start_position[1],
-                        velocity[1],
-                        interval.start_time,
-                        precision,
-                    ),
                     _position_equation(
                         start_position,
                         velocity,
                         interval.start_time,
                         precision,
                     ),
-                    _velocity_equation("v_i", velocity[0], precision),
-                    _velocity_equation("v_j", velocity[1], precision),
                     _velocity_vector_equation(velocity, precision),
                     _speed_equation(speed, precision),
                     _velocity_displacement_equation(speed, precision),
@@ -560,13 +545,9 @@ def export_collision_forces_csv(
             "actor_1",
             "actor_2",
             "body_label",
-            "impulse_i_Ns",
-            "impulse_j_Ns",
             "impulse_vector_ij_Ns",
             "impulse_magnitude_Ns",
             "assumed_contact_duration_s",
-            "average_force_i_N",
-            "average_force_j_N",
             "average_force_vector_ij_N",
             "average_force_magnitude_N",
         ])
@@ -581,14 +562,10 @@ def export_collision_forces_csv(
                     event.actors[0],
                     event.actors[1],
                     body_label,
-                    format_scalar(impulse_vector[0], precision),
-                    format_scalar(impulse_vector[1], precision),
-                    format_impulse_vector(impulse_vector, precision),
+                    format_vector_sum(impulse_vector, "i", "j", precision),
                     format_scalar(np.linalg.norm(impulse_vector), 6),
                     format_scalar(CONTACT_DURATION_S, 6),
-                    format_scalar(average_force[0], precision),
-                    format_scalar(average_force[1], precision),
-                    format_force_vector_from_impulse(impulse_vector, CONTACT_DURATION_S, precision),
+                    format_vector_sum(average_force, "i", "j", precision),
                     format_scalar(np.linalg.norm(average_force), 6),
                 ])
 
