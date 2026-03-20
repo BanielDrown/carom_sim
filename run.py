@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import math
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from carom.animation import animate_trajectory
 from carom.constants import C_START_X_M, C_START_Y_M
@@ -24,9 +32,6 @@ POST_SUCCESS_FRACTION = 0.10
 PLOT_RELEVANT_ONLY = True
 ANIMATION_DURATION_S = 3.0
 ANIMATION_FPS = 20
-
-
-from pathlib import Path
 
 for p in [
     "outputs/animations",
