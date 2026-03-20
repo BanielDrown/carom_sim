@@ -69,6 +69,16 @@ def format_vector_ij(v: np.ndarray, precision: int = 4) -> str:
     return f"{x} i {sign} {abs(y)} j"
 
 
+def format_component(value: float, basis: str, precision: int = 4) -> str:
+    """
+    Format one scalar basis-vector component such as 1.25 i or -0.75 j.
+    """
+    component = round(float(value), precision)
+    if abs(component) < 10 ** (-precision):
+        component = 0.0
+    return f"{component} {basis}"
+
+
 def format_position_vector(v: np.ndarray, precision: int = 4) -> str:
     """
     Format a position vector in standard notation.
@@ -159,28 +169,37 @@ def _speed(v: np.ndarray) -> float:
 
 def _position_equation(position: np.ndarray, velocity: np.ndarray, t0: float, precision: int) -> str:
     return (
-        f"r(t) = ({format_scalar(position[0], precision)} + "
-        f"{format_scalar(velocity[0], precision)}(t - {format_scalar(t0, precision)}), "
-        f"{format_scalar(position[1], precision)} + "
-        f"{format_scalar(velocity[1], precision)}(t - {format_scalar(t0, precision)}))"
+        "r(t) = "
+        f"({format_scalar(position[0], precision)} + "
+        f"{format_scalar(velocity[0], precision)}(t - {format_scalar(t0, precision)})) i + "
+        f"({format_scalar(position[1], precision)} + "
+        f"{format_scalar(velocity[1], precision)}(t - {format_scalar(t0, precision)})) j"
     )
 
 
 def _coordinate_equation(
-    axis_name: str,
+    component_name: str,
     p0: float,
     v0: float,
     t0: float,
     precision: int,
 ) -> str:
     return (
-        f"{axis_name}(t) = {format_scalar(p0, precision)} + "
+        f"{component_name}(t) = {format_scalar(p0, precision)} + "
         f"{format_scalar(v0, precision)}(t - {format_scalar(t0, precision)})"
     )
 
 
 def _velocity_equation(component_name: str, value: float, precision: int) -> str:
     return f"{component_name}(t) = {format_scalar(value, precision)}"
+
+
+def _velocity_vector_equation(velocity: np.ndarray, precision: int) -> str:
+    return (
+        "v(t) = "
+        f"{format_component(velocity[0], 'i', precision)} + "
+        f"{format_component(velocity[1], 'j', precision)}"
+    )
 
 
 def _speed_equation(speed: float, precision: int) -> str:
@@ -268,13 +287,11 @@ def export_initial_conditions_csv(
         writer.writerow([
             "ball_label",
             "mass_kg",
-            "initial_position_x_m",
-            "initial_position_y_m",
-            "initial_position_xy_m",
+            "initial_position_i_m",
+            "initial_position_j_m",
             "initial_position_vector_ij",
-            "initial_velocity_x_mps",
-            "initial_velocity_y_mps",
-            "initial_velocity_xy_mps",
+            "initial_velocity_i_mps",
+            "initial_velocity_j_mps",
             "initial_velocity_vector_ij",
             "initial_speed_mps",
             "initial_momentum_vector_ij_kgmps",
@@ -287,11 +304,9 @@ def export_initial_conditions_csv(
                 format_scalar(ball.mass, 6),
                 format_scalar(ball.position[0], precision),
                 format_scalar(ball.position[1], precision),
-                format_vector_xy(ball.position, precision),
                 format_position_vector(ball.position, precision),
                 format_scalar(ball.velocity[0], precision),
                 format_scalar(ball.velocity[1], precision),
-                format_vector_xy(ball.velocity, precision),
                 format_velocity_vector(ball.velocity, precision),
                 format_scalar(_speed(ball.velocity), precision),
                 format_momentum_vector(ball.velocity, ball.mass, precision),
@@ -317,16 +332,12 @@ def export_event_table_csv(
             "event_type",
             "actor_1",
             "actor_2",
-            "collision_position_x_m",
-            "collision_position_y_m",
-            "collision_position_xy_m",
+            "collision_position_i_m",
+            "collision_position_j_m",
             "collision_position_vector_ij",
             "impulse_magnitude_Ns",
-            "pre_collision_velocities_xy_mps",
             "pre_collision_velocities_ij_mps",
-            "post_collision_velocities_xy_mps",
             "post_collision_velocities_ij_mps",
-            "impulse_vectors_xy_Ns",
             "impulse_vectors_ij_Ns",
             "average_force_vectors_ij_N",
         ])
@@ -340,14 +351,10 @@ def export_event_table_csv(
                 event.actors[1],
                 format_scalar(event.position[0], precision),
                 format_scalar(event.position[1], precision),
-                format_vector_xy(event.position, precision),
                 format_position_vector(event.position, precision),
                 "" if event.impulse is None else format_scalar(event.impulse, 6),
-                serialize_vector_map_xy(event.pre_velocities, precision),
                 serialize_vector_map_ij(event.pre_velocities, "v", precision),
-                serialize_vector_map_xy(event.post_velocities, precision),
                 serialize_vector_map_ij(event.post_velocities, "v", precision),
-                serialize_vector_map_xy(event.impulse_vectors, precision),
                 serialize_vector_map_ij(event.impulse_vectors, "J", precision),
                 serialize_force_map_ij(event.impulse_vectors, precision),
             ])
@@ -369,15 +376,15 @@ def export_state_summary_csv(
         writer.writerow([
             "ball_label",
             "mass_kg",
-            "initial_position_x_m",
-            "initial_position_y_m",
-            "initial_velocity_x_mps",
-            "initial_velocity_y_mps",
+            "initial_position_i_m",
+            "initial_position_j_m",
+            "initial_velocity_i_mps",
+            "initial_velocity_j_mps",
             "initial_speed_mps",
-            "final_position_x_m",
-            "final_position_y_m",
-            "final_velocity_x_mps",
-            "final_velocity_y_mps",
+            "final_position_i_m",
+            "final_position_j_m",
+            "final_velocity_i_mps",
+            "final_velocity_j_mps",
             "final_speed_mps",
             "initial_momentum_vector_ij_kgmps",
             "final_momentum_vector_ij_kgmps",
@@ -427,20 +434,21 @@ def export_motion_intervals_csv(
             "time_start_s",
             "time_end_s",
             "duration_s",
-            "start_position_x_m",
-            "start_position_y_m",
-            "end_position_x_m",
-            "end_position_y_m",
-            "velocity_x_mps",
-            "velocity_y_mps",
+            "start_position_i_m",
+            "start_position_j_m",
+            "end_position_i_m",
+            "end_position_j_m",
+            "velocity_i_mps",
+            "velocity_j_mps",
             "speed_mps",
             "path_displacement_start_m",
             "path_displacement_end_m",
-            "x_of_t_equation",
-            "y_of_t_equation",
-            "position_vector_equation",
-            "vx_of_t_equation",
-            "vy_of_t_equation",
+            "r_i_of_t_equation",
+            "r_j_of_t_equation",
+            "position_vector_equation_ij",
+            "v_i_of_t_equation",
+            "v_j_of_t_equation",
+            "velocity_vector_equation_ij",
             "speed_of_t_equation",
             "speed_of_displacement_equation",
         ])
@@ -467,14 +475,14 @@ def export_motion_intervals_csv(
                     format_scalar(interval.displacement_start[label], precision),
                     format_scalar(interval.displacement_end[label], precision),
                     _coordinate_equation(
-                        "x",
+                        "r_i",
                         start_position[0],
                         velocity[0],
                         interval.start_time,
                         precision,
                     ),
                     _coordinate_equation(
-                        "y",
+                        "r_j",
                         start_position[1],
                         velocity[1],
                         interval.start_time,
@@ -486,8 +494,9 @@ def export_motion_intervals_csv(
                         interval.start_time,
                         precision,
                     ),
-                    _velocity_equation("v_x", velocity[0], precision),
-                    _velocity_equation("v_y", velocity[1], precision),
+                    _velocity_equation("v_i", velocity[0], precision),
+                    _velocity_equation("v_j", velocity[1], precision),
+                    _velocity_vector_equation(velocity, precision),
                     _speed_equation(speed, precision),
                     _velocity_displacement_equation(speed, precision),
                 ])
@@ -513,14 +522,13 @@ def export_collision_forces_csv(
             "actor_1",
             "actor_2",
             "body_label",
-            "impulse_x_Ns",
-            "impulse_y_Ns",
-            "impulse_vector_xy_Ns",
+            "impulse_i_Ns",
+            "impulse_j_Ns",
             "impulse_vector_ij_Ns",
             "impulse_magnitude_Ns",
             "assumed_contact_duration_s",
-            "average_force_x_N",
-            "average_force_y_N",
+            "average_force_i_N",
+            "average_force_j_N",
             "average_force_vector_ij_N",
             "average_force_magnitude_N",
         ])
@@ -537,7 +545,6 @@ def export_collision_forces_csv(
                     body_label,
                     format_scalar(impulse_vector[0], precision),
                     format_scalar(impulse_vector[1], precision),
-                    format_vector_xy(impulse_vector, precision),
                     format_impulse_vector(impulse_vector, precision),
                     format_scalar(np.linalg.norm(impulse_vector), 6),
                     format_scalar(CONTACT_DURATION_S, 6),
