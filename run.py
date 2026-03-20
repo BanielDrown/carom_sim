@@ -9,7 +9,12 @@ from carom.io_utils import (
     format_position_vector,
     format_velocity_vector,
 )
-from carom.plotting import plot_trajectories
+from carom.plotting import (
+    plot_piecewise_position_time_graphs,
+    plot_trajectories,
+    plot_velocity_displacement_graph,
+    plot_velocity_time_graph,
+)
 from carom.search import SearchCandidate, angle_deg, search_shots_with_random_layouts
 from carom.simulator import simulate
 from carom.state import Ball, SimulationState, Table, vec2
@@ -141,13 +146,16 @@ def print_case_summary(case_name: str, best: SearchCandidate) -> None:
 
 def export_case(case_name: str, result, trajectory, table: Table) -> None:
     """
-    Export plot, tables, animation, and console event log for one case.
+    Export plots, tables, animation, and console event log for one case.
     """
+    plot_dir = Path("outputs/plots") / case_name
+    table_dir = Path("outputs/tables") / case_name
+
     plot_trajectories(
         result=result,
         trajectory=trajectory,
         table=table,
-        save_path=f"outputs/plots/{case_name}.png",
+        save_path=str(plot_dir / "table_trajectories.png"),
         relevant_only=PLOT_RELEVANT_ONLY,
         max_events_to_plot=None,
         show_collisions=True,
@@ -157,9 +165,28 @@ def export_case(case_name: str, result, trajectory, table: Table) -> None:
         post_end_fraction=POST_SUCCESS_FRACTION,
     )
 
+    plot_piecewise_position_time_graphs(
+        result=result,
+        trajectory=trajectory,
+        output_dir=str(plot_dir),
+    )
+
+    plot_velocity_time_graph(
+        result=result,
+        trajectory=trajectory,
+        save_path=str(plot_dir / "velocity_time.png"),
+    )
+
+    plot_velocity_displacement_graph(
+        result=result,
+        trajectory=trajectory,
+        save_path=str(plot_dir / "velocity_displacement.png"),
+    )
+
     export_case_bundle(
         result=result,
-        stem=f"outputs/tables/{case_name}",
+        trajectory=trajectory,
+        output_dir=table_dir,
         precision=4,
     )
 
