@@ -89,6 +89,12 @@ Run tests:
 PYTHONPATH=src pytest -q
 ```
 
+Offline-friendly test runner (uses the repo's fallback NumPy shim only when real NumPy is unavailable):
+
+```bash
+./scripts/run_tests_offline.sh
+```
+
 ## Outputs
 
 Generated artifacts are written to:

@@ -146,3 +146,38 @@ def all_balls_hit_wall(events: list[CollisionEvent]) -> bool:
     """
     counts = wall_hits_by_ball(events)
     return all(counts[label] >= 1 for label in ("A", "B", "C"))
+
+
+def should_stop_early(events: list[CollisionEvent], max_c_walls_after_first_hit: int = 3) -> bool:
+    """
+    Return True when the partial event history is already sufficient to stop a search.
+
+    Current heuristics
+    ------------------
+    - stop once cue ball C has already contacted both object balls
+    - stop if cue ball C has hit too many walls after its first distinct object-ball contact
+    """
+    contacts = first_two_object_ball_contacts(events)
+    if len(contacts) >= 2:
+        return True
+
+    cue_wall_hits_after_first_contact = 0
+    first_contact_seen = False
+
+    for event in events:
+        if event.event_type == "ball-ball":
+            a, b = event.actors
+            if "C" in (a, b):
+                other = b if a == "C" else a
+                if other in ("A", "B"):
+                    first_contact_seen = True
+
+        elif event.event_type == "ball-wall" and first_contact_seen:
+            ball_label, _wall = event.actors
+            if ball_label == "C":
+                cue_wall_hits_after_first_contact += 1
+                if cue_wall_hits_after_first_contact >= max_c_walls_after_first_hit:
+                    return True
+
+    return False
+
