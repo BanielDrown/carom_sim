@@ -8,19 +8,25 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import matplotlib.patheffects as pe
 from matplotlib.patches import FancyArrowPatch, Rectangle
 
+from carom.constants import NORMALIZED_VECTOR_LENGTH_M
 from carom.io_utils import build_motion_intervals, format_impulse_vector, format_scalar
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
 from carom.validation import first_success_event_index
 
 
-BALL_COLORS = {
+BALL_FACE_COLORS = {
     "A": "red",
     "B": "blue",
     "C": "white",
+}
+
+BALL_TRACE_COLORS = {
+    "A": "red",
+    "B": "blue",
+    "C": "black",
 }
 
 BALL_NAMES = {
@@ -30,35 +36,6 @@ BALL_NAMES = {
 }
 
 VECTOR_EPS = 1e-12
-STANDARD_ARROW_FRACTION = 0.09
-
-
-def _high_visibility_path_effects(
-    outer_width: float = 5.0,
-    inner_width: float = 3.0,
-) -> list:
-    """
-    Return a stacked white/black outline effect for visibility on any background.
-    """
-    return [
-        pe.Stroke(linewidth=outer_width, foreground="white"),
-        pe.Stroke(linewidth=inner_width, foreground="black"),
-        pe.Normal(),
-    ]
-
-
-def _arrow_visibility_path_effects() -> list:
-    """
-    White + black outline for vector arrows.
-    """
-    return _high_visibility_path_effects(outer_width=5.4, inner_width=3.6)
-
-
-def _text_visibility_path_effects() -> list:
-    """
-    White + black outline for annotation text.
-    """
-    return _high_visibility_path_effects(outer_width=4.0, inner_width=2.2)
 
 
 def _ball_text_color(facecolor: str) -> str:
@@ -216,12 +193,56 @@ def _representative_impulse_vector(
 
 def _standard_arrow_length(
     table: Table,
-    max_fraction_of_table: float = STANDARD_ARROW_FRACTION,
 ) -> float:
     """
     Use one standardized arrow length for all reaction arrows.
     """
-    return max_fraction_of_table * min(table.length, table.width)
+    return min(
+        NORMALIZED_VECTOR_LENGTH_M,
+        0.18 * min(table.length, table.width),
+    )
+
+
+def _annotation_offsets(table: Table) -> list[np.ndarray]:
+    """
+    Predefined annotation offsets sized relative to the table dimensions.
+    """
+    dx = 0.045 * table.length
+    dy = 0.045 * table.width
+    return [
+        np.array([dx, dy]),
+        np.array([dx, -dy]),
+        np.array([-dx, dy]),
+        np.array([-dx, -dy]),
+        np.array([1.4 * dx, 0.0]),
+        np.array([0.0, 1.4 * dy]),
+    ]
+
+
+def _clip_to_table(point: np.ndarray, table: Table, margin: float) -> np.ndarray:
+    """
+    Keep annotations inside the visible table bounds.
+    """
+    return np.array(
+        [
+            np.clip(point[0], table.x_min + margin, table.x_max - margin),
+            np.clip(point[1], table.y_min + margin, table.y_max - margin),
+        ],
+        dtype=float,
+    )
+
+
+def _label_box() -> dict:
+    """
+    Shared label box styling for readability.
+    """
+    return {
+        "boxstyle": "round,pad=0.18",
+        "facecolor": "white",
+        "edgecolor": "black",
+        "linewidth": 0.8,
+        "alpha": 0.90,
+    }
 
 
 def _draw_impulse_pair(
@@ -253,9 +274,8 @@ def _draw_impulse_pair(
             linewidth=1.8,
             color=color,
             alpha=0.90,
-            zorder=7,
+            zorder=2,
         )
-        arrow.set_path_effects(_arrow_visibility_path_effects())
         ax.add_patch(arrow)
 
 
@@ -285,9 +305,8 @@ def _draw_single_impulse_arrow(
         linewidth=1.8,
         color=color,
         alpha=0.90,
-        zorder=7,
+        zorder=2,
     )
-    arrow.set_path_effects(_arrow_visibility_path_effects())
     ax.add_patch(arrow)
 
 
@@ -295,19 +314,28 @@ def _draw_impulse_label(
     ax,
     position: np.ndarray,
     impulse_vec: np.ndarray,
+    table: Table,
+    offset_index: int,
 ) -> None:
     """
     Display the impulse vector beside the collision arrows in i, j notation.
     """
+    label_position = _clip_to_table(
+        position + _annotation_offsets(table)[offset_index % len(_annotation_offsets(table))],
+        table,
+        margin=0.08,
+    )
     label = ax.text(
-        float(position[0] + 0.03),
-        float(position[1] + 0.03),
+        float(label_position[0]),
+        float(label_position[1]),
         format_impulse_vector(impulse_vec),
         fontsize=8.5,
         color="black",
-        zorder=9,
+        ha="left",
+        va="center",
+        bbox=_label_box(),
+        zorder=6,
     )
-    label.set_path_effects(_text_visibility_path_effects())
 
 
 def _draw_ball_marker(
@@ -326,25 +354,69 @@ def _draw_ball_marker(
         radius=radius,
         facecolor=facecolor,
         edgecolor="black",
-        linewidth=2.0,
+        linewidth=1.6,
         alpha=alpha,
-        zorder=4,
+        zorder=5,
     )
-    ball.set_path_effects(_high_visibility_path_effects(outer_width=4.6, inner_width=2.8))
     ax.add_patch(ball)
 
-    text = ax.text(
+    ax.text(
         float(center[0]),
         float(center[1]),
         label_text,
         ha="center",
         va="center",
         fontsize=10,
-        weight="bold",
+        weight="normal",
         color=_ball_text_color(facecolor),
-        zorder=5,
+        zorder=6,
     )
-    text.set_path_effects(_text_visibility_path_effects())
+
+
+def _draw_direction_arrow(
+    ax,
+    origin: np.ndarray,
+    vector: np.ndarray,
+    color: str,
+    label: str,
+    table: Table,
+    offset_index: int,
+) -> None:
+    """
+    Draw one normalized direction arrow with a compact label.
+    """
+    magnitude = float(np.linalg.norm(vector))
+    if magnitude <= VECTOR_EPS:
+        return
+
+    direction = vector / magnitude
+    scaled = _standard_arrow_length(table) * direction
+
+    arrow = FancyArrowPatch(
+        posA=(float(origin[0]), float(origin[1])),
+        posB=(float(origin[0] + scaled[0]), float(origin[1] + scaled[1])),
+        arrowstyle="-|>",
+        mutation_scale=12,
+        linewidth=1.4,
+        color=color,
+        alpha=0.85,
+        zorder=2,
+    )
+    ax.add_patch(arrow)
+
+    text_origin = origin + scaled + _annotation_offsets(table)[offset_index % len(_annotation_offsets(table))] * 0.35
+    text_origin = _clip_to_table(text_origin, table, margin=0.08)
+    ax.text(
+        float(text_origin[0]),
+        float(text_origin[1]),
+        label,
+        fontsize=8,
+        color="black",
+        ha="left",
+        va="center",
+        bbox=_label_box(),
+        zorder=6,
+    )
 
 
 def plot_trajectories(
@@ -367,21 +439,20 @@ def plot_trajectories(
     -----
     - Plotting is trimmed by physical time, not just by event count.
     - The preferred time limit is result.display_end_time when available.
-    - Velocity arrows are intentionally omitted from the clean plot for clarity.
-      Momentum arrows should be shown in the animation layer instead.
-    - Ball-ball collisions are annotated using impulse-arrow pairs instead of
-      green dots.
+    - Final-state velocity vectors and collision impulses use a common
+      normalized display length so direction stays readable.
+    - Collision vectors are drawn below the ball markers to preserve the ball
+      silhouettes and labels.
     """
     del show_velocity_vectors
     del show_impulse_vectors
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(12, 6), layout="constrained")
     radius = result.initial_state.balls["C"].radius
 
     ax.set_xlim(0.0, table.length)
     ax.set_ylim(0.0, table.width)
     ax.set_aspect("equal")
-    ax.set_title("Carom Simulation Trajectories")
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_facecolor("#fbf8ef")
@@ -390,12 +461,11 @@ def plot_trajectories(
         (0.0, 0.0),
         table.length,
         table.width,
-        linewidth=2.0,
-        edgecolor="#444444",
+        linewidth=1.8,
+        edgecolor="black",
         facecolor="none",
         zorder=0,
     )
-    table_patch.set_path_effects(_high_visibility_path_effects(outer_width=5.0, inner_width=3.0))
     ax.add_patch(table_patch)
 
     t_limit = _relevant_end_time(
@@ -422,7 +492,7 @@ def plot_trajectories(
         if len(path_array) == 0:
             continue
 
-        color = BALL_COLORS.get(label, "gray")
+        color = BALL_TRACE_COLORS.get(label, "gray")
         line_width = 2.8 if label == "C" else 2.0
         line_style = "-" if label == "C" else "--"
 
@@ -435,14 +505,25 @@ def plot_trajectories(
             alpha=0.92,
             label=BALL_NAMES.get(label, label),
             zorder=1,
-            path_effects=_high_visibility_path_effects(outer_width=3.8, inner_width=2.0),
         )
 
         start = path_array[0]
         end = path_array[-1]
+        facecolor = BALL_FACE_COLORS.get(label, "white")
 
-        _draw_ball_marker(ax, start, radius, label, color, alpha=1.0)
-        _draw_ball_marker(ax, end, radius, f"{label}′", color, alpha=0.78)
+        _draw_ball_marker(ax, start, radius, label, facecolor, alpha=1.0)
+        _draw_ball_marker(ax, end, radius, f"{label}′", facecolor, alpha=0.78)
+
+        velocity = result.final_state.balls[label].velocity
+        _draw_direction_arrow(
+            ax=ax,
+            origin=end,
+            vector=velocity,
+            color=color,
+            label=f"v_{label}",
+            table=table,
+            offset_index=0 if label == "A" else (2 if label == "B" else 4),
+        )
 
     # Collision annotations
     if show_collisions:
@@ -459,21 +540,12 @@ def plot_trajectories(
             collision_index += 1
             x, y = anchor_position
             first_label, impulse_vec = representative_impulse
-            ax.scatter(
-                x,
-                y,
-                color="white",
-                edgecolors="black",
-                linewidths=0.8,
-                s=28,
-                zorder=6,
-            )
             if event.event_type == "ball-ball":
                 _draw_impulse_pair(
                     ax=ax,
                     position=anchor_position,
                     impulse_vec=impulse_vec,
-                    color=BALL_COLORS.get(first_label, "green"),
+                    color="black" if first_label == "C" else BALL_TRACE_COLORS.get(first_label, "black"),
                     arrow_length=arrow_length,
                 )
             else:
@@ -481,10 +553,16 @@ def plot_trajectories(
                     ax=ax,
                     position=anchor_position,
                     impulse_vec=impulse_vec,
-                    color=BALL_COLORS.get(first_label, "#ffb347"),
+                    color="black" if first_label == "C" else BALL_TRACE_COLORS.get(first_label, "black"),
                     arrow_length=arrow_length,
                 )
-            _draw_impulse_label(ax, anchor_position, impulse_vec)
+            _draw_impulse_label(
+                ax=ax,
+                position=anchor_position,
+                impulse_vec=impulse_vec,
+                table=table,
+                offset_index=collision_index - 1,
+            )
 
             if debug:
                 debug_text = ax.text(
@@ -493,10 +571,9 @@ def plot_trajectories(
                     f"C{collision_index}",
                     fontsize=9,
                     color="green",
-                    weight="bold",
+                    weight="normal",
                     zorder=8,
                 )
-                debug_text.set_path_effects(_text_visibility_path_effects())
 
     class_label = result.classification if result.classification is not None else "unclassified"
     result_label = "success" if result.success else "failed"
@@ -507,20 +584,24 @@ def plot_trajectories(
     if result.display_end_time is not None:
         header += f" | display_end_t: {result.display_end_time:.3f} s"
 
-    header_text = ax.text(
+    ax.set_title("Carom Simulation Trajectories", fontsize=16, weight="normal", pad=14)
+    ax.text(
         0.01,
-        1.02,
+        0.99,
         header,
         transform=ax.transAxes,
-        fontsize=10,
+        fontsize=9,
+        va="top",
+        ha="left",
+        bbox=_label_box(),
+        zorder=10,
     )
-    header_text.set_path_effects(_text_visibility_path_effects())
 
     if debug:
         status = result.assignment_status
         status_text = ax.text(
             0.01,
-            0.98,
+            0.91,
             (
                 f"cue_contacts={sorted(status.cue_contacts)} | "
                 f"wall_hits=A:{status.wall_hits['A']} "
@@ -532,8 +613,8 @@ def plot_trajectories(
             transform=ax.transAxes,
             fontsize=9,
             va="top",
+            bbox=_label_box(),
         )
-        status_text.set_path_effects(_text_visibility_path_effects())
 
     ax.grid(True, alpha=0.18, linestyle=":")
     ax.legend(loc="upper left", framealpha=0.95)
@@ -568,8 +649,8 @@ def plot_piecewise_position_time_graphs(
 
     labels = sorted(result.initial_state.balls.keys())
     for label in labels:
-        fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-        color = BALL_COLORS.get(label, "gray")
+        fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True, layout="constrained")
+        color = BALL_TRACE_COLORS.get(label, "gray")
 
         for axis_index, (ax, component_index, component_name) in enumerate(
             zip(axes, (0, 1), ("x", "y"))
@@ -588,31 +669,35 @@ def plot_piecewise_position_time_graphs(
                     linewidth=2.4,
                 )
 
-                midpoint_time = 0.5 * (start_time + end_time)
-                midpoint_value = 0.5 * (start_value + end_value)
-                equation = (
-                    f"{component_name}(t) = {format_scalar(start_value)} + "
-                    f"{format_scalar(velocity_value)}(t - {format_scalar(start_time)})"
-                )
-                vertical_offset = 0.02 * max(1.0, result.initial_state.balls[label].radius)
-                ax.text(
-                    midpoint_time,
-                    midpoint_value + vertical_offset,
-                    equation,
-                    fontsize=8,
-                    color=color,
-                    ha="center",
-                    va="bottom",
-                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
-                )
+                if end_time - start_time > 0.035:
+                    midpoint_time = 0.5 * (start_time + end_time)
+                    midpoint_value = 0.5 * (start_value + end_value)
+                    equation = (
+                        f"{component_name}(t) = {format_scalar(start_value)} + "
+                        f"{format_scalar(velocity_value)}(t - {format_scalar(start_time)})"
+                    )
+                    vertical_offset = 0.025 * max(1.0, result.initial_state.balls[label].radius)
+                    ax.text(
+                        midpoint_time,
+                        midpoint_value + vertical_offset,
+                        equation,
+                        fontsize=7.5,
+                        color="black",
+                        ha="center",
+                        va="bottom",
+                        bbox=_label_box(),
+                    )
 
             ax.set_ylabel(f"{component_name}(t) [m]")
             ax.grid(True, alpha=0.22, linestyle=":")
             if axis_index == 0:
-                ax.set_title(f"{BALL_NAMES.get(label, label)} Position-Time Graph")
+                ax.set_title(
+                    f"{BALL_NAMES.get(label, label)} Position-Time Graph",
+                    fontsize=14,
+                    weight="normal",
+                )
 
         axes[-1].set_xlabel("time [s]")
-        fig.tight_layout()
 
         save_path = None
         if output_dir is not None:
@@ -633,11 +718,11 @@ def plot_velocity_time_graph(
         return
 
     labels = sorted(result.initial_state.balls.keys())
-    fig, axes = plt.subplots(len(labels), 1, figsize=(11, 8), sharex=True)
+    fig, axes = plt.subplots(len(labels), 1, figsize=(11, 8), sharex=True, layout="constrained")
     axes = np.atleast_1d(axes)
 
     for ax, label in zip(axes, labels):
-        color = BALL_COLORS.get(label, "gray")
+        color = BALL_TRACE_COLORS.get(label, "gray")
         for interval in intervals:
             speed = float(np.linalg.norm(interval.velocities[label]))
             ax.plot(
@@ -647,24 +732,28 @@ def plot_velocity_time_graph(
                 linewidth=2.6,
             )
             ax.vlines(interval.end_time, 0.0, speed, colors=color, alpha=0.20, linewidth=1.0)
-            midpoint_time = 0.5 * (interval.start_time + interval.end_time)
-            ax.text(
-                midpoint_time,
-                speed,
-                f"|v|(t) = {format_scalar(speed)}",
-                fontsize=8,
-                color=color,
-                ha="center",
-                va="bottom",
-                bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
-            )
+            if interval.end_time - interval.start_time > 0.035:
+                midpoint_time = 0.5 * (interval.start_time + interval.end_time)
+                ax.text(
+                    midpoint_time,
+                    speed,
+                    f"|v|(t) = {format_scalar(speed)}",
+                    fontsize=7.5,
+                    color="black",
+                    ha="center",
+                    va="bottom",
+                    bbox=_label_box(),
+                )
 
         ax.set_ylabel(f"{label} speed\n[m/s]")
         ax.grid(True, alpha=0.22, linestyle=":")
 
-    axes[0].set_title("Velocity-Time Graph (Piecewise Constant Speed)")
+    axes[0].set_title(
+        "Velocity-Time Graph (Piecewise Constant Speed)",
+        fontsize=14,
+        weight="normal",
+    )
     axes[-1].set_xlabel("time [s]")
-    fig.tight_layout()
     _save_or_show(fig, save_path)
 
 
@@ -681,32 +770,36 @@ def plot_velocity_displacement_graph(
         return
 
     labels = sorted(result.initial_state.balls.keys())
-    fig, axes = plt.subplots(len(labels), 1, figsize=(11, 8), sharex=False)
+    fig, axes = plt.subplots(len(labels), 1, figsize=(11, 8), sharex=False, layout="constrained")
     axes = np.atleast_1d(axes)
 
     for ax, label in zip(axes, labels):
-        color = BALL_COLORS.get(label, "gray")
+        color = BALL_TRACE_COLORS.get(label, "gray")
         for interval in intervals:
             speed = float(np.linalg.norm(interval.velocities[label]))
             s0 = interval.displacement_start[label]
             s1 = interval.displacement_end[label]
             ax.plot([s0, s1], [speed, speed], color=color, linewidth=2.6)
-            midpoint_s = 0.5 * (s0 + s1)
-            ax.text(
-                midpoint_s,
-                speed,
-                f"|v|(s) = {format_scalar(speed)}",
-                fontsize=8,
-                color=color,
-                ha="center",
-                va="bottom",
-                bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
-            )
+            if s1 - s0 > 0.06:
+                midpoint_s = 0.5 * (s0 + s1)
+                ax.text(
+                    midpoint_s,
+                    speed,
+                    f"|v|(s) = {format_scalar(speed)}",
+                    fontsize=7.5,
+                    color="black",
+                    ha="center",
+                    va="bottom",
+                    bbox=_label_box(),
+                )
 
         ax.set_ylabel(f"{label} speed\n[m/s]")
         ax.grid(True, alpha=0.22, linestyle=":")
 
-    axes[0].set_title("Velocity-Displacement Graph (Cumulative Path Length)")
+    axes[0].set_title(
+        "Velocity-Displacement Graph (Cumulative Path Length)",
+        fontsize=14,
+        weight="normal",
+    )
     axes[-1].set_xlabel("cumulative displacement [m]")
-    fig.tight_layout()
     _save_or_show(fig, save_path)

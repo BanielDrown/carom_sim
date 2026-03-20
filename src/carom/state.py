@@ -141,6 +141,8 @@ class CollisionEvent:
     pre_velocities: dict[str, np.ndarray] = field(default_factory=dict)
     post_velocities: dict[str, np.ndarray] = field(default_factory=dict)
     impulse_vectors: dict[str, np.ndarray] = field(default_factory=dict)
+    collision_normal: Optional[np.ndarray] = None
+    collision_tangent: Optional[np.ndarray] = None
 
     def to_dict(self) -> dict:
         """
@@ -155,6 +157,12 @@ class CollisionEvent:
             "pre_velocities": _serialize_vector_map(self.pre_velocities),
             "post_velocities": _serialize_vector_map(self.post_velocities),
             "impulse_vectors": _serialize_vector_map(self.impulse_vectors),
+            "collision_normal": (
+                None if self.collision_normal is None else self.collision_normal.tolist()
+            ),
+            "collision_tangent": (
+                None if self.collision_tangent is None else self.collision_tangent.tolist()
+            ),
         }
 
 

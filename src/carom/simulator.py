@@ -83,6 +83,33 @@ def _append_trajectory_sample(
     )
 
 
+def _collision_frame(
+    state: SimulationState,
+    event_type: str,
+    actors: tuple[str, str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Construct orthonormal collision-frame unit vectors (n, t).
+
+    n points along the collision normal and t is the +90 degree rotation of n.
+    """
+    if event_type == "ball-ball":
+        a, b = actors
+        delta = state.balls[b].position - state.balls[a].position
+        norm = float(np.linalg.norm(delta))
+        if norm <= 0.0:
+            raise ValueError("Cannot build a collision frame for coincident ball centers.")
+        normal = delta / norm
+    elif event_type == "ball-wall":
+        _ball_label, wall_name = actors
+        normal = wall_normal_from_name(wall_name)
+    else:
+        raise ValueError(f"Unknown event type: {event_type}")
+
+    tangent = np.array([-normal[1], normal[0]], dtype=float)
+    return normal, tangent
+
+
 def simulate(
     initial_state: SimulationState,
     table: Optional[Table] = None,
@@ -244,6 +271,11 @@ def simulate(
             event_type=event_type,
             actors=actors,
         )
+        collision_normal, collision_tangent = _collision_frame(
+            state=state,
+            event_type=event_type,
+            actors=actors,
+        )
 
         event = CollisionEvent(
             time=state.time,
@@ -254,6 +286,8 @@ def simulate(
             pre_velocities=pre_velocities,
             post_velocities=post_velocities,
             impulse_vectors=impulse_vectors,
+            collision_normal=collision_normal,
+            collision_tangent=collision_tangent,
         )
         events.append(event)
 
