@@ -9,21 +9,49 @@ from pathlib import Path
 import matplotlib.animation as mpl_animation
 import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.patheffects as pe
 from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
 
+from carom.io_utils import format_impulse_vector
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
-from carom.validation import first_success_event_index
 from carom.validation import first_success_event_index
 
 
 BALL_COLORS = {
     "A": "red",
     "B": "blue",
-    "C": "black",
+    "C": "white",
 }
 
 VECTOR_EPS = 1e-12
+STANDARD_ARROW_FRACTION = 0.09
+
+
+def _high_visibility_path_effects(
+    outer_width: float = 5.0,
+    inner_width: float = 3.0,
+) -> list:
+    """
+    Return a stacked white/black outline effect for visibility on any background.
+    """
+    return [
+        pe.Stroke(linewidth=outer_width, foreground="white"),
+        pe.Stroke(linewidth=inner_width, foreground="black"),
+        pe.Normal(),
+    ]
+
+
+def _arrow_visibility_path_effects() -> list:
+    return _high_visibility_path_effects(outer_width=5.4, inner_width=3.6)
+
+
+def _text_visibility_path_effects() -> list:
+    return _high_visibility_path_effects(outer_width=4.0, inner_width=2.2)
+
+
+def _ball_text_color(facecolor: str) -> str:
+    return "black" if facecolor == "white" else "white"
 
 
 def _assignment_cutoff_index(result: SimulationResult) -> int:
@@ -190,29 +218,14 @@ def _momentum_scale(
     return max_arrow_length / pmax
 
 
-def _impulse_scale(
-    result: SimulationResult,
+def _standard_arrow_length(
     table: Table,
-    max_fraction_of_table: float = 0.12,
+    max_fraction_of_table: float = STANDARD_ARROW_FRACTION,
 ) -> float:
     """
-    Compute one global impulse-arrow scale for the whole animation.
+    Use one standardized arrow length for all collision reaction arrows.
     """
-    impulse_magnitudes = [
-        float(np.linalg.norm(vec))
-        for event in result.events
-        for vec in event.impulse_vectors.values()
-    ]
-
-    if not impulse_magnitudes:
-        return 0.0
-
-    jmax = max(impulse_magnitudes)
-    if jmax <= 1e-12:
-        return 0.0
-
-    max_arrow_length = max_fraction_of_table * min(table.length, table.width)
-    return max_arrow_length / jmax
+    return max_fraction_of_table * min(table.length, table.width)
 
 
 def _event_anchor_position(
@@ -307,6 +320,7 @@ def _draw_momentum_arrow(
         alpha=0.92,
         zorder=5,
     )
+    arrow.set_path_effects(_arrow_visibility_path_effects())
     ax.add_patch(arrow)
     return arrow
 
@@ -316,16 +330,17 @@ def _draw_impulse_pair(
     position: np.ndarray,
     impulse_vec: np.ndarray,
     color: str,
-    scale: float,
+    arrow_length: float,
 ):
     """
-    Draw equal and opposite impulse arrows centered at the collision point.
+    Draw equal and opposite standardized impulse arrows centered at the collision point.
     """
     mag = float(np.linalg.norm(impulse_vec))
-    if mag <= VECTOR_EPS or scale <= 0.0:
+    if mag <= VECTOR_EPS or arrow_length <= 0.0:
         return []
 
-    half = scale * impulse_vec
+    direction = impulse_vec / mag
+    half = 0.5 * arrow_length * direction
 
     start1 = position - 0.5 * half
     start2 = position + 0.5 * half
@@ -342,10 +357,44 @@ def _draw_impulse_pair(
             alpha=0.88,
             zorder=8,
         )
+        arrow.set_path_effects(_arrow_visibility_path_effects())
         ax.add_patch(arrow)
         arrows.append(arrow)
 
     return arrows
+
+
+def _draw_single_impulse_arrow(
+    ax,
+    position: np.ndarray,
+    impulse_vec: np.ndarray,
+    color: str,
+    arrow_length: float,
+):
+    """
+    Draw one standardized impulse arrow for ball-wall reactions.
+    """
+    mag = float(np.linalg.norm(impulse_vec))
+    if mag <= VECTOR_EPS or arrow_length <= 0.0:
+        return None
+
+    direction = impulse_vec / mag
+    tail = position - 0.5 * arrow_length * direction
+    head = position + 0.5 * arrow_length * direction
+
+    arrow = FancyArrowPatch(
+        posA=(float(tail[0]), float(tail[1])),
+        posB=(float(head[0]), float(head[1])),
+        arrowstyle="-|>",
+        mutation_scale=12,
+        color=color,
+        linewidth=2.0,
+        alpha=0.88,
+        zorder=8,
+    )
+    arrow.set_path_effects(_arrow_visibility_path_effects())
+    ax.add_patch(arrow)
+    return arrow
 
 
 def animate_trajectory(
@@ -419,11 +468,12 @@ def animate_trajectory(
         linewidth=2.0,
         edgecolor="black",
     )
+    table_patch.set_path_effects(_high_visibility_path_effects(outer_width=5.0, inner_width=3.0))
     ax.add_patch(table_patch)
 
     radius = result.initial_state.balls["C"].radius
     pscale = _momentum_scale(result, max_fraction_of_table=0.18, table=table)
-    jscale = _impulse_scale(result, table=table, max_fraction_of_table=0.12)
+    arrow_length = _standard_arrow_length(table=table)
 
     ball_patches: dict[str, Circle] = {}
     ball_labels: dict[str, any] = {}
@@ -436,21 +486,27 @@ def animate_trajectory(
         patch = Circle(
             (float(pos[0]), float(pos[1])),
             radius=radius,
-            color=BALL_COLORS.get(label, "gray"),
+            facecolor=BALL_COLORS.get(label, "gray"),
+            edgecolor="black",
+            linewidth=2.0,
             zorder=3,
         )
+        patch.set_path_effects(_high_visibility_path_effects(outer_width=4.6, inner_width=2.8))
         ax.add_patch(patch)
         ball_patches[label] = patch
 
         text = ax.text(
-            float(pos[0] + 0.02),
-            float(pos[1] + 0.02),
+            float(pos[0]),
+            float(pos[1]),
             label,
             fontsize=10,
             weight="bold",
-            color=BALL_COLORS.get(label, "gray"),
+            color=_ball_text_color(BALL_COLORS.get(label, "gray")),
+            ha="center",
+            va="center",
             zorder=4,
         )
+        text.set_path_effects(_text_visibility_path_effects())
         ball_labels[label] = text
 
         momentum_artists[label] = None
@@ -470,13 +526,36 @@ def animate_trajectory(
             label, impulse_vec = representative_impulse
             event_artists = []
             color = BALL_COLORS.get(label, "gray")
-            new_artists = _draw_impulse_pair(
-                ax=ax,
-                position=_event_anchor_position(result, event),
-                impulse_vec=impulse_vec,
-                color=color,
-                scale=jscale,
+            anchor = _event_anchor_position(result, event)
+            if event.event_type == "ball-ball":
+                new_artists = _draw_impulse_pair(
+                    ax=ax,
+                    position=anchor,
+                    impulse_vec=impulse_vec,
+                    color=color,
+                    arrow_length=arrow_length,
+                )
+            else:
+                new_arrow = _draw_single_impulse_arrow(
+                    ax=ax,
+                    position=anchor,
+                    impulse_vec=impulse_vec,
+                    color=color,
+                    arrow_length=arrow_length,
+                )
+                new_artists = [] if new_arrow is None else [new_arrow]
+
+            label_artist = ax.text(
+                float(anchor[0] + 0.03),
+                float(anchor[1] + 0.03),
+                format_impulse_vector(impulse_vec),
+                fontsize=8.5,
+                color="black",
+                zorder=9,
             )
+            label_artist.set_path_effects(_text_visibility_path_effects())
+            new_artists.append(label_artist)
+
             for artist in new_artists:
                 artist.set_visible(False)
             event_artists.extend(new_artists)
@@ -491,6 +570,7 @@ def animate_trajectory(
         transform=ax.transAxes,
         fontsize=10,
     )
+    status_text.set_path_effects(_text_visibility_path_effects())
 
     def update(frame_idx: int):
         sample = frames[frame_idx]
@@ -499,7 +579,7 @@ def animate_trajectory(
         for label, patch in ball_patches.items():
             pos = sample.positions[label]
             patch.center = (float(pos[0]), float(pos[1]))
-            ball_labels[label].set_position((float(pos[0] + 0.02), float(pos[1] + 0.02)))
+            ball_labels[label].set_position((float(pos[0]), float(pos[1])))
 
             artists.append(patch)
             artists.append(ball_labels[label])

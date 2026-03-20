@@ -13,6 +13,7 @@ if str(SRC_ROOT) not in sys.path:
 from carom.animation import animate_trajectory
 from carom.constants import C_START_X_M, C_START_Y_M
 from carom.io_utils import (
+    format_impulse_vector,
     export_case_bundle,
     format_position_vector,
     format_velocity_vector,
@@ -62,7 +63,8 @@ def print_events(result) -> None:
             f"{i}: t={event.time:.6f}, "
             f"type={event.event_type}, "
             f"actors={event.actors}, "
-            f"pos={event.position}"
+            f"pos={format_position_vector(event.position)}, "
+            f"impulses={'; '.join(f'{label}: {format_impulse_vector(vec)}' for label, vec in sorted(event.impulse_vectors.items())) or 'none'}"
         )
 
 

@@ -60,9 +60,20 @@ def test_export_case_bundle_writes_reorganized_csv_files(tmp_path: Path):
     assert expected_files.issubset({path.name for path in tmp_path.iterdir()})
 
     motion_csv = (tmp_path / "02_motion_intervals.csv").read_text()
-    assert "position_vector_equation" in motion_csv
+    assert "position_vector_equation_ij" in motion_csv
+    assert "velocity_vector_equation_ij" in motion_csv
     assert "speed_of_displacement_equation" in motion_csv
 
+    initial_csv = (tmp_path / "01_initial_conditions.csv").read_text()
+    assert "initial_position_vector_ij" in initial_csv
+    assert "initial_position_xy_m" not in initial_csv
+    assert "initial_velocity_xy_mps" not in initial_csv
+
+    events_csv = (tmp_path / "03_collision_events.csv").read_text()
+    assert "impulse_vectors_ij_Ns" in events_csv
+    assert "impulse_vectors_xy_Ns" not in events_csv
+
     forces_csv = (tmp_path / "04_collision_forces.csv").read_text()
-    assert "average_force_x_N" in forces_csv
+    assert "average_force_i_N" in forces_csv
+    assert "impulse_vector_xy_Ns" not in forces_csv
     assert "body_label" in forces_csv

@@ -8,9 +8,10 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.patheffects as pe
 from matplotlib.patches import FancyArrowPatch, Rectangle
 
-from carom.io_utils import build_motion_intervals, format_scalar
+from carom.io_utils import build_motion_intervals, format_impulse_vector, format_scalar
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
 from carom.validation import first_success_event_index
@@ -19,7 +20,7 @@ from carom.validation import first_success_event_index
 BALL_COLORS = {
     "A": "red",
     "B": "blue",
-    "C": "black",
+    "C": "white",
 }
 
 BALL_NAMES = {
@@ -29,6 +30,42 @@ BALL_NAMES = {
 }
 
 VECTOR_EPS = 1e-12
+STANDARD_ARROW_FRACTION = 0.09
+
+
+def _high_visibility_path_effects(
+    outer_width: float = 5.0,
+    inner_width: float = 3.0,
+) -> list:
+    """
+    Return a stacked white/black outline effect for visibility on any background.
+    """
+    return [
+        pe.Stroke(linewidth=outer_width, foreground="white"),
+        pe.Stroke(linewidth=inner_width, foreground="black"),
+        pe.Normal(),
+    ]
+
+
+def _arrow_visibility_path_effects() -> list:
+    """
+    White + black outline for vector arrows.
+    """
+    return _high_visibility_path_effects(outer_width=5.4, inner_width=3.6)
+
+
+def _text_visibility_path_effects() -> list:
+    """
+    White + black outline for annotation text.
+    """
+    return _high_visibility_path_effects(outer_width=4.0, inner_width=2.2)
+
+
+def _ball_text_color(facecolor: str) -> str:
+    """
+    Choose a contrasting label color for text placed inside a ball.
+    """
+    return "black" if facecolor == "white" else "white"
 
 
 def _relevant_event_cutoff(result: SimulationResult) -> int:
@@ -177,29 +214,14 @@ def _representative_impulse_vector(
     return label, event.impulse_vectors[label]
 
 
-def _impulse_scale(
-    events: list,
+def _standard_arrow_length(
     table: Table,
-    max_fraction_of_table: float = 0.10,
+    max_fraction_of_table: float = STANDARD_ARROW_FRACTION,
 ) -> float:
     """
-    Compute one global impulse-vector scale for static plotting.
+    Use one standardized arrow length for all reaction arrows.
     """
-    impulse_magnitudes = [
-        float(np.linalg.norm(vec))
-        for event in events
-        for vec in event.impulse_vectors.values()
-    ]
-
-    if not impulse_magnitudes:
-        return 0.0
-
-    jmax = max(impulse_magnitudes)
-    if jmax <= 1e-12:
-        return 0.0
-
-    max_arrow_length = max_fraction_of_table * min(table.length, table.width)
-    return max_arrow_length / jmax
+    return max_fraction_of_table * min(table.length, table.width)
 
 
 def _draw_impulse_pair(
@@ -207,16 +229,17 @@ def _draw_impulse_pair(
     position: np.ndarray,
     impulse_vec: np.ndarray,
     color: str,
-    scale: float,
+    arrow_length: float,
 ) -> None:
     """
-    Draw equal and opposite impulse arrows centered at the collision point.
+    Draw equal and opposite standardized impulse arrows centered at the collision point.
     """
     mag = float(np.linalg.norm(impulse_vec))
-    if mag <= VECTOR_EPS or scale <= 0.0:
+    if mag <= VECTOR_EPS or arrow_length <= 0.0:
         return
 
-    half = scale * impulse_vec
+    direction = impulse_vec / mag
+    half = 0.5 * arrow_length * direction
 
     start1 = position - 0.5 * half
     start2 = position + 0.5 * half
@@ -232,7 +255,96 @@ def _draw_impulse_pair(
             alpha=0.90,
             zorder=7,
         )
+        arrow.set_path_effects(_arrow_visibility_path_effects())
         ax.add_patch(arrow)
+
+
+def _draw_single_impulse_arrow(
+    ax,
+    position: np.ndarray,
+    impulse_vec: np.ndarray,
+    color: str,
+    arrow_length: float,
+) -> None:
+    """
+    Draw one standardized arrow for a ball-wall reaction.
+    """
+    mag = float(np.linalg.norm(impulse_vec))
+    if mag <= VECTOR_EPS or arrow_length <= 0.0:
+        return
+
+    direction = impulse_vec / mag
+    tail = position - 0.5 * arrow_length * direction
+    head = position + 0.5 * arrow_length * direction
+
+    arrow = FancyArrowPatch(
+        posA=(float(tail[0]), float(tail[1])),
+        posB=(float(head[0]), float(head[1])),
+        arrowstyle="-|>",
+        mutation_scale=12,
+        linewidth=1.8,
+        color=color,
+        alpha=0.90,
+        zorder=7,
+    )
+    arrow.set_path_effects(_arrow_visibility_path_effects())
+    ax.add_patch(arrow)
+
+
+def _draw_impulse_label(
+    ax,
+    position: np.ndarray,
+    impulse_vec: np.ndarray,
+) -> None:
+    """
+    Display the impulse vector beside the collision arrows in i, j notation.
+    """
+    label = ax.text(
+        float(position[0] + 0.03),
+        float(position[1] + 0.03),
+        format_impulse_vector(impulse_vec),
+        fontsize=8.5,
+        color="black",
+        zorder=9,
+    )
+    label.set_path_effects(_text_visibility_path_effects())
+
+
+def _draw_ball_marker(
+    ax,
+    center: np.ndarray,
+    radius: float,
+    label_text: str,
+    facecolor: str,
+    alpha: float = 1.0,
+) -> None:
+    """
+    Draw a labeled ball with the label centered inside the circle.
+    """
+    ball = plt.Circle(
+        (float(center[0]), float(center[1])),
+        radius=radius,
+        facecolor=facecolor,
+        edgecolor="black",
+        linewidth=2.0,
+        alpha=alpha,
+        zorder=4,
+    )
+    ball.set_path_effects(_high_visibility_path_effects(outer_width=4.6, inner_width=2.8))
+    ax.add_patch(ball)
+
+    text = ax.text(
+        float(center[0]),
+        float(center[1]),
+        label_text,
+        ha="center",
+        va="center",
+        fontsize=10,
+        weight="bold",
+        color=_ball_text_color(facecolor),
+        zorder=5,
+    )
+    text.set_path_effects(_text_visibility_path_effects())
 
 
 def plot_trajectories(
@@ -283,6 +395,7 @@ def plot_trajectories(
         facecolor="none",
         zorder=0,
     )
+    table_patch.set_path_effects(_high_visibility_path_effects(outer_width=5.0, inner_width=3.0))
     ax.add_patch(table_patch)
 
     t_limit = _relevant_end_time(
@@ -312,7 +425,6 @@ def plot_trajectories(
         color = BALL_COLORS.get(label, "gray")
         line_width = 2.8 if label == "C" else 2.0
         line_style = "-" if label == "C" else "--"
-        label_offset = 0.85 * radius
 
         ax.plot(
             path_array[:, 0],
@@ -323,83 +435,30 @@ def plot_trajectories(
             alpha=0.92,
             label=BALL_NAMES.get(label, label),
             zorder=1,
+            path_effects=_high_visibility_path_effects(outer_width=3.8, inner_width=2.0),
         )
 
         start = path_array[0]
         end = path_array[-1]
 
-        ax.scatter(
-            start[0],
-            start[1],
-            s=220,
-            color=color,
-            edgecolors="black",
-            linewidths=0.9,
-            marker="o",
-            zorder=4,
-        )
-        ax.text(
-            float(start[0] + label_offset),
-            float(start[1] + label_offset),
-            label,
-            color=color,
-            fontsize=10,
-            weight="bold",
-            zorder=5,
-        )
-
-        ax.scatter(
-            end[0],
-            end[1],
-            s=220,
-            facecolors="white",
-            color=color,
-            edgecolors="black",
-            linewidths=1.8,
-            marker="o",
-            alpha=0.95,
-            zorder=4,
-        )
-        ax.text(
-            float(end[0] + label_offset),
-            float(end[1] + label_offset),
-            f"{label}'",
-            color=color,
-            fontsize=10,
-            weight="bold",
-            zorder=5,
-        )
+        _draw_ball_marker(ax, start, radius, label, color, alpha=1.0)
+        _draw_ball_marker(ax, end, radius, f"{label}′", color, alpha=0.78)
 
     # Collision annotations
     if show_collisions:
         collision_index = 0
-        impulse_scale = _impulse_scale(
-            plotted_events,
-            table=table,
-            max_fraction_of_table=0.10,
-        )
+        arrow_length = _standard_arrow_length(table=table)
 
         for event in plotted_events:
             anchor_position = _event_anchor_position(result, event)
+            representative_impulse = _representative_impulse_vector(event)
 
-            if event.event_type != "ball-ball":
-                ax.scatter(
-                    anchor_position[0],
-                    anchor_position[1],
-                    color="#ffb347",
-                    edgecolors="black",
-                    linewidths=0.5,
-                    marker="s",
-                    s=24 if debug else 18,
-                    zorder=3,
-                )
+            if representative_impulse is None:
                 continue
 
             collision_index += 1
             x, y = anchor_position
-
-            # Draw one impulse-pair per collision to avoid duplicate overlays.
-            representative_impulse = _representative_impulse_vector(event)
+            first_label, impulse_vec = representative_impulse
             ax.scatter(
                 x,
                 y,
@@ -409,29 +468,26 @@ def plot_trajectories(
                 s=28,
                 zorder=6,
             )
-            if representative_impulse is not None and impulse_scale > 0.0:
-                first_label, impulse_vec = representative_impulse
-
+            if event.event_type == "ball-ball":
                 _draw_impulse_pair(
                     ax=ax,
                     position=anchor_position,
                     impulse_vec=impulse_vec,
                     color=BALL_COLORS.get(first_label, "green"),
-                    scale=impulse_scale,
+                    arrow_length=arrow_length,
                 )
             else:
-                ax.scatter(
-                    x,
-                    y,
-                    color="limegreen",
-                    edgecolors="black",
-                    linewidths=0.6,
-                    s=35,
-                    zorder=5,
+                _draw_single_impulse_arrow(
+                    ax=ax,
+                    position=anchor_position,
+                    impulse_vec=impulse_vec,
+                    color=BALL_COLORS.get(first_label, "#ffb347"),
+                    arrow_length=arrow_length,
                 )
+            _draw_impulse_label(ax, anchor_position, impulse_vec)
 
             if debug:
-                ax.text(
+                debug_text = ax.text(
                     float(x + 0.015),
                     float(y + 0.015),
                     f"C{collision_index}",
@@ -440,6 +496,7 @@ def plot_trajectories(
                     weight="bold",
                     zorder=8,
                 )
+                debug_text.set_path_effects(_text_visibility_path_effects())
 
     class_label = result.classification if result.classification is not None else "unclassified"
     result_label = "success" if result.success else "failed"
@@ -450,17 +507,18 @@ def plot_trajectories(
     if result.display_end_time is not None:
         header += f" | display_end_t: {result.display_end_time:.3f} s"
 
-    ax.text(
+    header_text = ax.text(
         0.01,
         1.02,
         header,
         transform=ax.transAxes,
         fontsize=10,
     )
+    header_text.set_path_effects(_text_visibility_path_effects())
 
     if debug:
         status = result.assignment_status
-        ax.text(
+        status_text = ax.text(
             0.01,
             0.98,
             (
@@ -475,6 +533,7 @@ def plot_trajectories(
             fontsize=9,
             va="top",
         )
+        status_text.set_path_effects(_text_visibility_path_effects())
 
     ax.grid(True, alpha=0.18, linestyle=":")
     ax.legend(loc="upper left", framealpha=0.95)
