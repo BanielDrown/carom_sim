@@ -94,8 +94,8 @@ PYTHONPATH=src pytest -q
 Generated artifacts are written to:
 
 - `outputs/animations/`
-- `outputs/plots/`
-- `outputs/tables/`
+- `outputs/plots/<case_name>/` for trajectory, position-time, velocity-time, and velocity-displacement graphs
+- `outputs/tables/<case_name>/` for numbered CSV exports, including motion intervals and collision-force summaries
 
 ## Rollback / Non-Destructive Workflow
 

@@ -4,13 +4,15 @@ Plotting utilities for the carom simulator.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import FancyArrowPatch, Rectangle
 
+from carom.io_utils import build_motion_intervals, format_scalar
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
-from carom.validation import first_success_event_index
 from carom.validation import first_success_event_index
 
 
@@ -477,8 +479,175 @@ def plot_trajectories(
     ax.grid(True, alpha=0.18, linestyle=":")
     ax.legend(loc="upper left", framealpha=0.95)
 
+    _save_or_show(fig, save_path)
+
+
+def _save_or_show(fig, save_path: str | None) -> None:
+    """
+    Save a figure if requested, otherwise show it interactively.
+    """
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        save_target = str(save_path)
+        Path(save_target).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_target, dpi=300, bbox_inches="tight")
         plt.close(fig)
     else:
         plt.show()
+
+
+def plot_piecewise_position_time_graphs(
+    result: SimulationResult,
+    trajectory: list[TrajectorySample],
+    output_dir: str | None = None,
+) -> None:
+    """
+    Plot x(t) and y(t) for each ball, labeled by interval equations.
+    """
+    intervals = build_motion_intervals(result, trajectory)
+    if not intervals:
+        return
+
+    labels = sorted(result.initial_state.balls.keys())
+    for label in labels:
+        fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+        color = BALL_COLORS.get(label, "gray")
+
+        for axis_index, (ax, component_index, component_name) in enumerate(
+            zip(axes, (0, 1), ("x", "y"))
+        ):
+            for interval in intervals:
+                start_time = interval.start_time
+                end_time = interval.end_time
+                start_value = interval.start_positions[label][component_index]
+                end_value = interval.end_positions[label][component_index]
+                velocity_value = interval.velocities[label][component_index]
+
+                ax.plot(
+                    [start_time, end_time],
+                    [start_value, end_value],
+                    color=color,
+                    linewidth=2.4,
+                )
+
+                midpoint_time = 0.5 * (start_time + end_time)
+                midpoint_value = 0.5 * (start_value + end_value)
+                equation = (
+                    f"{component_name}(t) = {format_scalar(start_value)} + "
+                    f"{format_scalar(velocity_value)}(t - {format_scalar(start_time)})"
+                )
+                vertical_offset = 0.02 * max(1.0, result.initial_state.balls[label].radius)
+                ax.text(
+                    midpoint_time,
+                    midpoint_value + vertical_offset,
+                    equation,
+                    fontsize=8,
+                    color=color,
+                    ha="center",
+                    va="bottom",
+                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+                )
+
+            ax.set_ylabel(f"{component_name}(t) [m]")
+            ax.grid(True, alpha=0.22, linestyle=":")
+            if axis_index == 0:
+                ax.set_title(f"{BALL_NAMES.get(label, label)} Position-Time Graph")
+
+        axes[-1].set_xlabel("time [s]")
+        fig.tight_layout()
+
+        save_path = None
+        if output_dir is not None:
+            save_path = str(Path(output_dir) / f"ball_{label}_position_time.png")
+        _save_or_show(fig, save_path)
+
+
+def plot_velocity_time_graph(
+    result: SimulationResult,
+    trajectory: list[TrajectorySample],
+    save_path: str | None = None,
+) -> None:
+    """
+    Plot piecewise-constant speed versus time for each ball.
+    """
+    intervals = build_motion_intervals(result, trajectory)
+    if not intervals:
+        return
+
+    labels = sorted(result.initial_state.balls.keys())
+    fig, axes = plt.subplots(len(labels), 1, figsize=(11, 8), sharex=True)
+    axes = np.atleast_1d(axes)
+
+    for ax, label in zip(axes, labels):
+        color = BALL_COLORS.get(label, "gray")
+        for interval in intervals:
+            speed = float(np.linalg.norm(interval.velocities[label]))
+            ax.plot(
+                [interval.start_time, interval.end_time],
+                [speed, speed],
+                color=color,
+                linewidth=2.6,
+            )
+            ax.vlines(interval.end_time, 0.0, speed, colors=color, alpha=0.20, linewidth=1.0)
+            midpoint_time = 0.5 * (interval.start_time + interval.end_time)
+            ax.text(
+                midpoint_time,
+                speed,
+                f"|v|(t) = {format_scalar(speed)}",
+                fontsize=8,
+                color=color,
+                ha="center",
+                va="bottom",
+                bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+            )
+
+        ax.set_ylabel(f"{label} speed\n[m/s]")
+        ax.grid(True, alpha=0.22, linestyle=":")
+
+    axes[0].set_title("Velocity-Time Graph (Piecewise Constant Speed)")
+    axes[-1].set_xlabel("time [s]")
+    fig.tight_layout()
+    _save_or_show(fig, save_path)
+
+
+def plot_velocity_displacement_graph(
+    result: SimulationResult,
+    trajectory: list[TrajectorySample],
+    save_path: str | None = None,
+) -> None:
+    """
+    Plot piecewise-constant speed versus cumulative path displacement for each ball.
+    """
+    intervals = build_motion_intervals(result, trajectory)
+    if not intervals:
+        return
+
+    labels = sorted(result.initial_state.balls.keys())
+    fig, axes = plt.subplots(len(labels), 1, figsize=(11, 8), sharex=False)
+    axes = np.atleast_1d(axes)
+
+    for ax, label in zip(axes, labels):
+        color = BALL_COLORS.get(label, "gray")
+        for interval in intervals:
+            speed = float(np.linalg.norm(interval.velocities[label]))
+            s0 = interval.displacement_start[label]
+            s1 = interval.displacement_end[label]
+            ax.plot([s0, s1], [speed, speed], color=color, linewidth=2.6)
+            midpoint_s = 0.5 * (s0 + s1)
+            ax.text(
+                midpoint_s,
+                speed,
+                f"|v|(s) = {format_scalar(speed)}",
+                fontsize=8,
+                color=color,
+                ha="center",
+                va="bottom",
+                bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+            )
+
+        ax.set_ylabel(f"{label} speed\n[m/s]")
+        ax.grid(True, alpha=0.22, linestyle=":")
+
+    axes[0].set_title("Velocity-Displacement Graph (Cumulative Path Length)")
+    axes[-1].set_xlabel("cumulative displacement [m]")
+    fig.tight_layout()
+    _save_or_show(fig, save_path)
