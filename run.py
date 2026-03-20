@@ -21,6 +21,16 @@ ANIMATION_DURATION_S = 3.0
 ANIMATION_FPS = 20
 
 
+from pathlib import Path
+
+for p in [
+    "outputs/animations",
+    "outputs/plots",
+    "outputs/tables",
+]:
+    Path(p).mkdir(parents=True, exist_ok=True)
+
+
 def print_events(result) -> None:
     """
     Print a compact event log for one simulation result.
