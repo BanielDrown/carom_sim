@@ -108,6 +108,32 @@ def format_impulse_vector(v: np.ndarray, precision: int = 4) -> str:
     return f"J = {format_vector_ij(v, precision)}"
 
 
+def format_unit_vector_nt(
+    v: np.ndarray | None,
+    prefix: str,
+    precision: int = 4,
+) -> str:
+    """
+    Format a collision-frame unit vector in n,t notation.
+    """
+    if v is None:
+        return ""
+
+    n_component = round(float(v[0]), precision)
+    t_component = round(float(v[1]), precision)
+
+    if abs(n_component) < 10 ** (-precision):
+        n_component = 0.0
+    if abs(t_component) < 10 ** (-precision):
+        t_component = 0.0
+
+    if t_component == 0.0:
+        return f"{prefix} = {n_component} n"
+
+    sign = "+" if t_component >= 0 else "-"
+    return f"{prefix} = {n_component} n {sign} {abs(t_component)} t"
+
+
 def format_force_vector_from_impulse(
     impulse: np.ndarray,
     contact_duration_s: float = CONTACT_DURATION_S,
@@ -335,6 +361,12 @@ def export_event_table_csv(
             "collision_position_i_m",
             "collision_position_j_m",
             "collision_position_vector_ij",
+            "collision_normal_i",
+            "collision_normal_j",
+            "collision_normal_vector_nt",
+            "collision_tangent_i",
+            "collision_tangent_j",
+            "collision_tangent_vector_nt",
             "impulse_magnitude_Ns",
             "pre_collision_velocities_ij_mps",
             "post_collision_velocities_ij_mps",
@@ -352,6 +384,12 @@ def export_event_table_csv(
                 format_scalar(event.position[0], precision),
                 format_scalar(event.position[1], precision),
                 format_position_vector(event.position, precision),
+                "" if event.collision_normal is None else format_scalar(event.collision_normal[0], precision),
+                "" if event.collision_normal is None else format_scalar(event.collision_normal[1], precision),
+                format_unit_vector_nt(event.collision_normal, "n_hat", precision),
+                "" if event.collision_tangent is None else format_scalar(event.collision_tangent[0], precision),
+                "" if event.collision_tangent is None else format_scalar(event.collision_tangent[1], precision),
+                format_unit_vector_nt(event.collision_tangent, "t_hat", precision),
                 "" if event.impulse is None else format_scalar(event.impulse, 6),
                 serialize_vector_map_ij(event.pre_velocities, "v", precision),
                 serialize_vector_map_ij(event.post_velocities, "v", precision),

@@ -47,6 +47,8 @@ def test_simulate_single_wall_collision():
     assert "C" in event.impulse_vectors
     assert event.impulse is not None
     assert event.impulse > 0.0
+    assert_vec_close(event.collision_normal, vec2(-1.0, 0.0))
+    assert_vec_close(event.collision_tangent, vec2(-0.0, -1.0))
 
 
 def test_simulate_single_ball_ball_collision():
@@ -86,6 +88,8 @@ def test_simulate_single_ball_ball_collision():
         event.impulse_vectors["B"] + event.impulse_vectors["C"],
         vec2(0.0, 0.0),
     )
+    assert_vec_close(event.collision_normal, vec2(-1.0, 0.0))
+    assert_vec_close(event.collision_tangent, vec2(-0.0, -1.0))
 
 
 def test_assignment_status_updates_on_wall_hit():

@@ -32,6 +32,13 @@ launch angle combinations for direct, one-cushion, and two-cushion examples.
   metadata; assignment success is determined only by the contact and wall-hit
   rules above.
 
+Because the solver is intentionally idealized, it is best interpreted as a
+clean rigid-body collision model. More full-featured billiards simulators such
+as PoolTool also model effects such as spin, sliding, rolling, and cloth
+friction; this repository currently does **not**. The current release focuses
+on making the frictionless event-driven model internally consistent,
+well-labeled, and easier to inspect.
+
 ## What Was Optimized
 
 The recent cleanup prioritized **accuracy first**, then **speed**, then
@@ -101,7 +108,20 @@ Generated artifacts are written to:
 
 - `outputs/animations/`
 - `outputs/plots/<case_name>/` for trajectory, position-time, velocity-time, and velocity-displacement graphs
-- `outputs/tables/<case_name>/` for numbered CSV exports, including motion intervals and collision-force summaries
+- `outputs/tables/<case_name>/` for numbered CSV exports, including motion
+  intervals, collision-frame `n/t` unit vectors, and collision-force summaries
+
+### Visualization Notes
+
+The current plotting layer emphasizes readability over decorative styling:
+
+- cue ball `C` is drawn with a white fill and black trace/labels
+- ball outlines are plain black
+- annotation text uses regular weight and boxed placement to reduce overlap
+- collision and velocity vectors are drawn with one normalized display length
+  so direction is easy to compare across events
+- vector arrows are rendered beneath the ball markers so ball identities stay
+  legible
 
 ## Rollback / Non-Destructive Workflow
 

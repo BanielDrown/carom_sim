@@ -93,6 +93,10 @@ POST_CONTACT_EVENT_BUFFER: int = 12
 # Keep as a modeling assumption only; impulse is the primary quantity.
 CONTACT_DURATION_S: float = 1.0e-3
 
+# Normalized display arrow length used for plotted vectors so that direction,
+# rather than raw magnitude, dominates the figure readability.
+NORMALIZED_VECTOR_LENGTH_M: float = 0.20
+
 # ============================================================
 # SEARCH / INITIALIZATION DEFAULTS
 # These can be overridden later by YAML config files.
