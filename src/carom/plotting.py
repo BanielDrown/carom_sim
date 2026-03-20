@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from carom.state import SimulationResult, Table, TrajectorySample
+from carom.validation import first_success_event_index
 
 
 BALL_COLORS = {
@@ -28,26 +29,7 @@ def _relevant_event_cutoff(result: SimulationResult) -> int:
     Return the event index where the assignment success condition is first met.
     If never met, return the full event count.
     """
-    cue_contacts: set[str] = set()
-    wall_hits = {"A": 0, "B": 0, "C": 0}
-
-    for i, event in enumerate(result.events, start=1):
-        if event.event_type == "ball-ball":
-            a, b = event.actors
-            if "C" in (a, b):
-                other = b if a == "C" else a
-                if other in ("A", "B"):
-                    cue_contacts.add(other)
-
-        elif event.event_type == "ball-wall":
-            ball_label, _wall = event.actors
-            if ball_label in wall_hits:
-                wall_hits[ball_label] += 1
-
-        if cue_contacts == {"A", "B"} and all(wall_hits[k] >= 1 for k in ("A", "B", "C")):
-            return i
-
-    return len(result.events)
+    return first_success_event_index(result.events) or len(result.events)
 
 
 def _relevant_end_time(

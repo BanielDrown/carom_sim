@@ -109,11 +109,10 @@ def wrap_angle(angle: float) -> float:
     """
     Wrap angle to (-pi, pi].
     """
-    while angle <= -np.pi:
-        angle += 2.0 * np.pi
-    while angle > np.pi:
-        angle -= 2.0 * np.pi
-    return angle
+    wrapped = (angle + np.pi) % (2.0 * np.pi) - np.pi
+    if wrapped <= -np.pi:
+        return float(np.pi)
+    return float(wrapped)
 
 
 def angle_to_target(from_pos: np.ndarray, to_pos: np.ndarray) -> float:
@@ -168,6 +167,7 @@ def randomize_object_positions(
     Generate random positions for A and B with separation constraints.
     """
     effective_margin = max(margin, ball_radius + 0.02)
+    min_clearance_sq = min_clearance**2
 
     def rand_pos() -> np.ndarray:
         return vec2(
@@ -179,11 +179,13 @@ def randomize_object_positions(
         a_pos = rand_pos()
         b_pos = rand_pos()
 
-        if np.linalg.norm(a_pos - b_pos) < min_clearance:
+        # Use squared distances here to avoid repeated square roots in the
+        # highest-frequency rejection-sampling loop of the search path.
+        if float(np.dot(a_pos - b_pos, a_pos - b_pos)) < min_clearance_sq:
             continue
-        if np.linalg.norm(a_pos - cue_position) < min_clearance:
+        if float(np.dot(a_pos - cue_position, a_pos - cue_position)) < min_clearance_sq:
             continue
-        if np.linalg.norm(b_pos - cue_position) < min_clearance:
+        if float(np.dot(b_pos - cue_position, b_pos - cue_position)) < min_clearance_sq:
             continue
 
         return a_pos, b_pos

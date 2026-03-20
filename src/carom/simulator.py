@@ -27,7 +27,7 @@ from .state import (
     Table,
     TrajectorySample,
 )
-from .validation import validate_result
+from .validation import advance_assignment_status, validate_result
 
 
 def advance_state(state: SimulationState, dt: float) -> None:
@@ -47,24 +47,6 @@ def snapshot_positions(state: SimulationState) -> dict[str, np.ndarray]:
     Copy the current ball positions.
     """
     return {label: ball.position.copy() for label, ball in state.balls.items()}
-
-
-def _update_assignment_status(status: AssignmentStatus, event: CollisionEvent) -> None:
-    """
-    Update assignment tracking based on a collision event.
-    """
-    if event.event_type == "ball-ball":
-        a, b = event.actors
-
-        if "C" in (a, b):
-            other = b if a == "C" else a
-            if other in ("A", "B"):
-                status.cue_contacts.add(other)
-
-    elif event.event_type == "ball-wall":
-        ball_label, _wall = event.actors
-        if ball_label in status.wall_hits:
-            status.wall_hits[ball_label] += 1
 
 
 def _make_collision_position(
@@ -275,7 +257,7 @@ def simulate(
         )
         events.append(event)
 
-        _update_assignment_status(assignment_status, event)
+        advance_assignment_status(assignment_status, event)
         _append_trajectory_sample(trajectory, state)
 
         if assignment_status.cue_hit_both and first_all_contacts_event_index is None:

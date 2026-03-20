@@ -100,7 +100,10 @@ CONTACT_DURATION_S: float = 1.0e-3
 
 DEFAULT_CUE_SPEED_MPS: float = 1.5
 MIN_CUE_SPEED_MPS: float = 0.05
-MAX_CUE_SPEED_MPS: float = 1.0
+# Search and refinement routinely explore cue speeds up to 7.5 m/s.
+# Keep the configured ceiling slightly above that range so local refinement
+# does not accidentally clamp otherwise valid coarse-search candidates.
+MAX_CUE_SPEED_MPS: float = 8.0
 
 DEFAULT_SPEED_SAMPLES: int = 14
 DEFAULT_ANGLE_SAMPLES: int = 181

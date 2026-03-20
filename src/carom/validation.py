@@ -6,7 +6,49 @@ supplementary shot classification.
 from __future__ import annotations
 
 from carom.classifier import classify_shot
-from carom.state import AssignmentStatus, SimulationResult
+from carom.state import AssignmentStatus, CollisionEvent, SimulationResult
+
+
+def advance_assignment_status(
+    status: AssignmentStatus,
+    event: CollisionEvent,
+) -> None:
+    """
+    Update assignment progress from a single collision event.
+
+    This centralizes the assignment rule interpretation so simulation,
+    validation, plotting, and animation all agree on what counts as:
+    - a cue-ball contact with A or B
+    - a wall hit for A, B, or C
+    """
+    if event.event_type == "ball-ball":
+        a, b = event.actors
+
+        if "C" in (a, b):
+            other = b if a == "C" else a
+            if other in ("A", "B"):
+                status.cue_contacts.add(other)
+
+        return
+
+    if event.event_type == "ball-wall":
+        ball_label, _wall = event.actors
+        if ball_label in status.wall_hits:
+            status.wall_hits[ball_label] += 1
+
+
+def first_success_event_index(events: list[CollisionEvent]) -> int | None:
+    """
+    Return the 1-based event index where assignment success is first achieved.
+    """
+    status = AssignmentStatus()
+
+    for index, event in enumerate(events, start=1):
+        advance_assignment_status(status, event)
+        if status.success:
+            return index
+
+    return None
 
 
 def build_assignment_status(result: SimulationResult) -> AssignmentStatus:
@@ -20,18 +62,7 @@ def build_assignment_status(result: SimulationResult) -> AssignmentStatus:
     status = AssignmentStatus()
 
     for event in result.events:
-        if event.event_type == "ball-ball":
-            a, b = event.actors
-
-            if "C" in (a, b):
-                other = b if a == "C" else a
-                if other in ("A", "B"):
-                    status.cue_contacts.add(other)
-
-        elif event.event_type == "ball-wall":
-            ball_label, _wall = event.actors
-            if ball_label in status.wall_hits:
-                status.wall_hits[ball_label] += 1
+        advance_assignment_status(status, event)
 
     return status
 
@@ -49,19 +80,7 @@ def first_success_time(result: SimulationResult) -> float | None:
     status = AssignmentStatus()
 
     for event in result.events:
-        if event.event_type == "ball-ball":
-            a, b = event.actors
-
-            if "C" in (a, b):
-                other = b if a == "C" else a
-                if other in ("A", "B"):
-                    status.cue_contacts.add(other)
-
-        elif event.event_type == "ball-wall":
-            ball_label, _wall = event.actors
-            if ball_label in status.wall_hits:
-                status.wall_hits[ball_label] += 1
-
+        advance_assignment_status(status, event)
         if status.success:
             return float(event.time)
 
