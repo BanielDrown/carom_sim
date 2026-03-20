@@ -8,11 +8,11 @@ from pathlib import Path
 
 import matplotlib.animation as mpl_animation
 import matplotlib.pyplot as plt
-import numpy as np
 import matplotlib.patheffects as pe
+import numpy as np
 from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
 
-from carom.io_utils import format_impulse_vector
+from carom.io_utils import format_scalar, format_vector_sum
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
 from carom.validation import first_success_event_index
@@ -22,6 +22,18 @@ BALL_COLORS = {
     "A": "red",
     "B": "blue",
     "C": "white",
+}
+
+BALL_TRACE_COLORS = {
+    "A": "red",
+    "B": "blue",
+    "C": "black",
+}
+
+BALL_NAMES = {
+    "A": "Ball A",
+    "B": "Ball B",
+    "C": "Cue Ball C",
 }
 
 VECTOR_EPS = 1e-12
@@ -52,6 +64,44 @@ def _text_visibility_path_effects() -> list:
 
 def _ball_text_color(facecolor: str) -> str:
     return "black" if facecolor == "white" else "white"
+
+
+def _line_equation_from_point_direction(
+    point: np.ndarray,
+    direction: np.ndarray | None,
+    precision: int = 4,
+) -> str:
+    """
+    Format the collision line in a compact analytic form.
+    """
+    if direction is None:
+        return ""
+
+    dx = float(direction[0])
+    dy = float(direction[1])
+    if abs(dx) <= VECTOR_EPS and abs(dy) <= VECTOR_EPS:
+        return ""
+
+    x0 = float(point[0])
+    y0 = float(point[1])
+
+    if abs(dx) <= VECTOR_EPS:
+        return f"x = {format_scalar(x0, precision)}"
+
+    slope = dy / dx
+    intercept = y0 - slope * x0
+    return f"y = {format_scalar(slope, precision)} x + {format_scalar(intercept, precision)}"
+
+
+def _build_ball_paths(trajectory: list[TrajectorySample]) -> dict[str, np.ndarray]:
+    """
+    Convert trajectory samples into one path array per ball.
+    """
+    ball_paths: dict[str, list[np.ndarray]] = {}
+    for sample in trajectory:
+        for label, pos in sample.positions.items():
+            ball_paths.setdefault(label, []).append(pos)
+    return {label: np.array(path) for label, path in ball_paths.items()}
 
 
 def _assignment_cutoff_index(result: SimulationResult) -> int:
@@ -364,37 +414,38 @@ def _draw_impulse_pair(
     return arrows
 
 
-def _draw_single_impulse_arrow(
+def _draw_collision_line(
     ax,
-    position: np.ndarray,
-    impulse_vec: np.ndarray,
-    color: str,
-    arrow_length: float,
+    point: np.ndarray,
+    direction: np.ndarray | None,
+    table: Table,
+    color: str = "dimgray",
 ):
     """
-    Draw one standardized impulse arrow for ball-wall reactions.
+    Draw the line of collision across the visible table.
     """
-    mag = float(np.linalg.norm(impulse_vec))
-    if mag <= VECTOR_EPS or arrow_length <= 0.0:
+    if direction is None:
         return None
 
-    direction = impulse_vec / mag
-    tail = position - 0.5 * arrow_length * direction
-    head = position + 0.5 * arrow_length * direction
+    norm = float(np.linalg.norm(direction))
+    if norm <= VECTOR_EPS:
+        return None
 
-    arrow = FancyArrowPatch(
-        posA=(float(tail[0]), float(tail[1])),
-        posB=(float(head[0]), float(head[1])),
-        arrowstyle="-|>",
-        mutation_scale=12,
+    unit = direction / norm
+    span = 1.4 * np.hypot(table.length, table.width)
+    start = point - span * unit
+    end = point + span * unit
+    (line,) = ax.plot(
+        [float(start[0]), float(end[0])],
+        [float(start[1]), float(end[1])],
+        linestyle=":",
+        linewidth=1.5,
         color=color,
-        linewidth=2.0,
-        alpha=0.88,
-        zorder=8,
+        alpha=0.55,
+        zorder=2,
     )
-    arrow.set_path_effects(_arrow_visibility_path_effects())
-    ax.add_patch(arrow)
-    return arrow
+    line.set_path_effects(_high_visibility_path_effects(4.0, 2.0))
+    return line
 
 
 def animate_trajectory(
@@ -437,9 +488,7 @@ def animate_trajectory(
     if not frames:
         raise ValueError("Cannot animate an empty trajectory.")
 
-    physical_start_time = float(frames[0].time)
-    physical_end_time = float(frames[-1].time)
-    physical_dt = 0.0 if len(frames) <= 1 else (physical_end_time - physical_start_time) / (len(frames) - 1)
+    physical_dt = 0.0 if len(frames) <= 1 else (float(frames[-1].time) - float(frames[0].time)) / (len(frames) - 1)
 
     display_end_time = _relevant_end_time(
         result=result,
@@ -455,7 +504,7 @@ def animate_trajectory(
     ax.set_xlim(0.0, table.length)
     ax.set_ylim(0.0, table.width)
     ax.set_aspect("equal")
-    ax.set_title("Carom Simulation Animation")
+    ax.set_title("Carom Simulation Animation", fontsize=16, weight="normal", pad=14)
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_facecolor("#fbf8ef")
@@ -470,18 +519,37 @@ def animate_trajectory(
     )
     table_patch.set_path_effects(_high_visibility_path_effects(outer_width=5.0, inner_width=3.0))
     ax.add_patch(table_patch)
+    ax.grid(True, alpha=0.18, linestyle=":")
 
     radius = result.initial_state.balls["C"].radius
-    pscale = _momentum_scale(result, max_fraction_of_table=0.18, table=table)
+    pscale = _momentum_scale(result, max_fraction_of_table=0.14, table=table)
     arrow_length = _standard_arrow_length(table=table)
 
     ball_patches: dict[str, Circle] = {}
     ball_labels: dict[str, any] = {}
     momentum_artists: dict[str, any] = {}
+    trace_lines: dict[str, any] = {}
+    sampled_paths = _build_ball_paths(frames)
 
     first_sample = frames[0]
     for label in sorted(first_sample.positions.keys()):
         pos = first_sample.positions[label]
+        color = BALL_TRACE_COLORS.get(label, "gray")
+        line_style = "-" if label == "C" else "--"
+        line_width = 2.8 if label == "C" else 2.0
+
+        (trace_line,) = ax.plot(
+            [float(pos[0])],
+            [float(pos[1])],
+            linestyle=line_style,
+            linewidth=line_width,
+            color=color,
+            alpha=0.92,
+            label=BALL_NAMES.get(label, label),
+            zorder=1,
+        )
+        trace_line.set_path_effects(_high_visibility_path_effects(4.2, 2.6))
+        trace_lines[label] = trace_line
 
         patch = Circle(
             (float(pos[0]), float(pos[1])),
@@ -489,7 +557,7 @@ def animate_trajectory(
             facecolor=BALL_COLORS.get(label, "gray"),
             edgecolor="black",
             linewidth=2.0,
-            zorder=3,
+            zorder=4,
         )
         patch.set_path_effects(_high_visibility_path_effects(outer_width=4.6, inner_width=2.8))
         ax.add_patch(patch)
@@ -504,7 +572,7 @@ def animate_trajectory(
             color=_ball_text_color(BALL_COLORS.get(label, "gray")),
             ha="center",
             va="center",
-            zorder=4,
+            zorder=5,
         )
         text.set_path_effects(_text_visibility_path_effects())
         ball_labels[label] = text
@@ -512,7 +580,7 @@ def animate_trajectory(
         momentum_artists[label] = None
 
     impulse_artists_by_event: list[list] = []
-    impulse_events: list = []
+    impulse_events: list[CollisionEvent] = []
 
     if show_impulse_pairs:
         for event in result.events:
@@ -524,51 +592,77 @@ def animate_trajectory(
                 continue
 
             label, impulse_vec = representative_impulse
-            event_artists = []
-            color = BALL_COLORS.get(label, "gray")
+            event_artists: list = []
+            color = BALL_TRACE_COLORS.get(label, "gray")
             anchor = _event_anchor_position(result, event)
-            if event.event_type == "ball-ball":
-                new_artists = _draw_impulse_pair(
+
+            collision_line = _draw_collision_line(
+                ax=ax,
+                point=anchor,
+                direction=event.collision_normal,
+                table=table,
+                color="dimgray",
+            )
+            if collision_line is not None:
+                event_artists.append(collision_line)
+
+            event_artists.extend(
+                _draw_impulse_pair(
                     ax=ax,
                     position=anchor,
                     impulse_vec=impulse_vec,
                     color=color,
                     arrow_length=arrow_length,
                 )
-            else:
-                new_arrow = _draw_single_impulse_arrow(
-                    ax=ax,
-                    position=anchor,
-                    impulse_vec=impulse_vec,
-                    color=color,
-                    arrow_length=arrow_length,
-                )
-                new_artists = [] if new_arrow is None else [new_arrow]
+            )
 
             label_artist = ax.text(
                 float(anchor[0] + 0.03),
                 float(anchor[1] + 0.03),
-                format_impulse_vector(impulse_vec),
+                (
+                    f"|J| = {format_scalar(float(np.linalg.norm(impulse_vec)), 4)} N·s\n"
+                    f"J = {format_vector_sum(impulse_vec, 'i', 'j')}\n"
+                    f"line: {_line_equation_from_point_direction(anchor, event.collision_normal)}"
+                ),
                 fontsize=8.5,
                 color="black",
+                bbox={
+                    "boxstyle": "round,pad=0.18",
+                    "facecolor": "white",
+                    "edgecolor": "black",
+                    "linewidth": 0.8,
+                    "alpha": 0.90,
+                },
                 zorder=9,
             )
             label_artist.set_path_effects(_text_visibility_path_effects())
-            new_artists.append(label_artist)
+            event_artists.append(label_artist)
 
-            for artist in new_artists:
+            for artist in event_artists:
                 artist.set_visible(False)
-            event_artists.extend(new_artists)
 
             impulse_events.append(event)
             impulse_artists_by_event.append(event_artists)
 
+    legend = ax.legend(loc="upper left", framealpha=0.95)
+    legend.set_zorder(12)
+
     status_text = ax.text(
-        0.01,
-        1.02,
+        0.99,
+        0.99,
         "",
         transform=ax.transAxes,
-        fontsize=10,
+        fontsize=9.5,
+        ha="right",
+        va="top",
+        bbox={
+            "boxstyle": "round,pad=0.18",
+            "facecolor": "white",
+            "edgecolor": "black",
+            "linewidth": 0.8,
+            "alpha": 0.90,
+        },
+        zorder=12,
     )
     status_text.set_path_effects(_text_visibility_path_effects())
 
@@ -580,7 +674,10 @@ def animate_trajectory(
             pos = sample.positions[label]
             patch.center = (float(pos[0]), float(pos[1]))
             ball_labels[label].set_position((float(pos[0]), float(pos[1])))
+            history = sampled_paths[label][: frame_idx + 1]
+            trace_lines[label].set_data(history[:, 0], history[:, 1])
 
+            artists.append(trace_lines[label])
             artists.append(patch)
             artists.append(ball_labels[label])
 
@@ -617,20 +714,17 @@ def animate_trajectory(
                         artists.append(artist)
 
         status_text.set_text(
-            f"t = {sample.time:.3f} s | "
-            f"Δt_frame = {physical_dt:.4f} s | "
-            f"success_t = {result.success_time:.3f} s | " if result.success_time is not None else
-            f"t = {sample.time:.3f} s | "
-            f"Δt_frame = {physical_dt:.4f} s | "
+            (
+                f"t = {sample.time:.3f} s | Δt = {physical_dt:.4f} s"
+                + (
+                    f" | success_t = {result.success_time:.3f} s"
+                    if result.success_time is not None
+                    else ""
+                )
+                + f"\nclassification: {result.classification or 'unclassified'}"
+                + f" | result: {'success' if result.success else 'failed'}"
+            )
         )
-
-        # Append classification/result in a second call to keep the conditional readable.
-        current_status = status_text.get_text()
-        current_status += (
-            f"classification: {result.classification or 'unclassified'} | "
-            f"result: {'success' if result.success else 'failed'}"
-        )
-        status_text.set_text(current_status)
 
         artists.append(status_text)
         return artists
@@ -649,4 +743,180 @@ def animate_trajectory(
     else:
         anim.save(str(output_path), writer="ffmpeg", fps=fps)
 
+    plt.close(fig)
+
+
+def export_animation_frame_snapshots(
+    result: SimulationResult,
+    trajectory: list[TrajectorySample],
+    table: Table,
+    save_path: str,
+    relevant_only: bool = True,
+    max_events_to_include: int | None = None,
+    fps: int = 30,
+    duration_s: float = 3.0,
+    post_end_fraction: float = 0.10,
+) -> None:
+    """
+    Export trajectory-style plots generated from representative animation frames.
+
+    Frames include the beginning, every collision event, and the ending state.
+    Each panel shows the animation styling plus the traced history accumulated up
+    to that frame.
+    """
+    trimmed = trim_trajectory_to_relevant_portion(
+        result=result,
+        trajectory=trajectory,
+        relevant_only=relevant_only,
+        max_events_to_include=max_events_to_include,
+        post_end_fraction=post_end_fraction,
+    )
+    frames = resample_uniform_in_time(trimmed, fps=fps, duration_s=duration_s)
+    if not frames:
+        raise ValueError("Cannot export frame snapshots from an empty trajectory.")
+
+    display_end_time = _relevant_end_time(
+        result=result,
+        relevant_only=relevant_only,
+        max_events_to_include=max_events_to_include,
+        post_end_fraction=post_end_fraction,
+    )
+    event_times = [
+        event.time
+        for event in result.events[:max_events_to_include]
+        if event.time <= display_end_time
+    ]
+    target_times = [frames[0].time, *event_times, frames[-1].time]
+
+    frame_indices: list[int] = []
+    for target_time in target_times:
+        frame_idx = min(
+            range(len(frames)),
+            key=lambda idx: abs(float(frames[idx].time) - float(target_time)),
+        )
+        if frame_idx not in frame_indices:
+            frame_indices.append(frame_idx)
+
+    n_panels = len(frame_indices)
+    fig, axes = plt.subplots(
+        n_panels,
+        1,
+        figsize=(12, max(3.8, 3.2 * n_panels)),
+        layout="constrained",
+    )
+    axes = np.atleast_1d(axes)
+    sampled_paths = _build_ball_paths(frames)
+    radius = result.initial_state.balls["C"].radius
+    arrow_length = _standard_arrow_length(table=table)
+
+    visible_events = [event for event in result.events if event.time <= display_end_time]
+
+    for panel_idx, frame_idx in enumerate(frame_indices):
+        ax = axes[panel_idx]
+        sample = frames[frame_idx]
+        ax.set_xlim(0.0, table.length)
+        ax.set_ylim(0.0, table.width)
+        ax.set_aspect("equal")
+        ax.set_facecolor("#fbf8ef")
+        ax.set_xlabel("x (m)")
+        ax.set_ylabel("y (m)")
+        ax.grid(True, alpha=0.18, linestyle=":")
+        ax.set_title(f"Animation frame at t = {sample.time:.3f} s", fontsize=12, loc="left")
+
+        table_patch = Rectangle(
+            (0.0, 0.0),
+            table.length,
+            table.width,
+            fill=False,
+            linewidth=2.0,
+            edgecolor="black",
+        )
+        table_patch.set_path_effects(_high_visibility_path_effects(outer_width=5.0, inner_width=3.0))
+        ax.add_patch(table_patch)
+
+        for label, path in sampled_paths.items():
+            history = path[: frame_idx + 1]
+            color = BALL_TRACE_COLORS.get(label, "gray")
+            style = "-" if label == "C" else "--"
+            width = 2.8 if label == "C" else 2.0
+            (line,) = ax.plot(
+                history[:, 0],
+                history[:, 1],
+                linestyle=style,
+                linewidth=width,
+                color=color,
+                alpha=0.92,
+                label=BALL_NAMES.get(label, label),
+                zorder=1,
+            )
+            line.set_path_effects(_high_visibility_path_effects(4.2, 2.6))
+
+            pos = sample.positions[label]
+            ball = Circle(
+                (float(pos[0]), float(pos[1])),
+                radius=radius,
+                facecolor=BALL_COLORS.get(label, "gray"),
+                edgecolor="black",
+                linewidth=2.0,
+                zorder=4,
+            )
+            ball.set_path_effects(_high_visibility_path_effects(outer_width=4.6, inner_width=2.8))
+            ax.add_patch(ball)
+
+            text = ax.text(
+                float(pos[0]),
+                float(pos[1]),
+                label,
+                fontsize=10,
+                weight="bold",
+                color=_ball_text_color(BALL_COLORS.get(label, "gray")),
+                ha="center",
+                va="center",
+                zorder=5,
+            )
+            text.set_path_effects(_text_visibility_path_effects())
+
+        for event in visible_events:
+            if event.time > sample.time:
+                continue
+            representative_impulse = _representative_impulse_vector(event)
+            if representative_impulse is None:
+                continue
+            first_label, impulse_vec = representative_impulse
+            anchor = _event_anchor_position(result, event)
+            _draw_collision_line(ax, anchor, event.collision_normal, table)
+            _draw_impulse_pair(
+                ax,
+                anchor,
+                impulse_vec,
+                BALL_TRACE_COLORS.get(first_label, "black"),
+                arrow_length,
+            )
+            note = ax.text(
+                float(anchor[0] + 0.03),
+                float(anchor[1] + 0.03),
+                (
+                    f"|J| = {format_scalar(float(np.linalg.norm(impulse_vec)), 4)} N·s\n"
+                    f"J = {format_vector_sum(impulse_vec, 'i', 'j')}\n"
+                    f"line: {_line_equation_from_point_direction(anchor, event.collision_normal)}"
+                ),
+                fontsize=8,
+                color="black",
+                bbox={
+                    "boxstyle": "round,pad=0.18",
+                    "facecolor": "white",
+                    "edgecolor": "black",
+                    "linewidth": 0.8,
+                    "alpha": 0.90,
+                },
+                zorder=9,
+            )
+            note.set_path_effects(_text_visibility_path_effects())
+
+        legend = ax.legend(loc="upper left", framealpha=0.95)
+        legend.set_zorder(12)
+
+    save_target = Path(save_path)
+    save_target.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(str(save_target), dpi=300, bbox_inches="tight")
     plt.close(fig)
