@@ -5,12 +5,33 @@ Formatting and export helpers for the carom simulator.
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from carom.constants import CONTACT_DURATION_S
-from carom.state import SimulationResult
+from carom.state import SimulationResult, TrajectorySample
+
+
+@dataclass(frozen=True)
+class MotionInterval:
+    """
+    One piecewise-constant-velocity interval for the exported analysis.
+    """
+
+    interval_index: int
+    start_time: float
+    end_time: float
+    start_positions: dict[str, np.ndarray]
+    end_positions: dict[str, np.ndarray]
+    velocities: dict[str, np.ndarray]
+    displacement_start: dict[str, float]
+    displacement_end: dict[str, float]
+
+    @property
+    def duration(self) -> float:
+        return self.end_time - self.start_time
 
 
 def format_scalar(value: float, precision: int = 4) -> str:
@@ -132,24 +153,158 @@ def serialize_force_map_ij(
     return serialize_vector_map_ij(force_map, "F_avg", precision)
 
 
+def _speed(v: np.ndarray) -> float:
+    return float(np.linalg.norm(v))
+
+
+def _position_equation(position: np.ndarray, velocity: np.ndarray, t0: float, precision: int) -> str:
+    return (
+        f"r(t) = ({format_scalar(position[0], precision)} + "
+        f"{format_scalar(velocity[0], precision)}(t - {format_scalar(t0, precision)}), "
+        f"{format_scalar(position[1], precision)} + "
+        f"{format_scalar(velocity[1], precision)}(t - {format_scalar(t0, precision)}))"
+    )
+
+
+def _coordinate_equation(
+    axis_name: str,
+    p0: float,
+    v0: float,
+    t0: float,
+    precision: int,
+) -> str:
+    return (
+        f"{axis_name}(t) = {format_scalar(p0, precision)} + "
+        f"{format_scalar(v0, precision)}(t - {format_scalar(t0, precision)})"
+    )
+
+
+def _velocity_equation(component_name: str, value: float, precision: int) -> str:
+    return f"{component_name}(t) = {format_scalar(value, precision)}"
+
+
+def _speed_equation(speed: float, precision: int) -> str:
+    return f"|v|(t) = {format_scalar(speed, precision)}"
+
+
+def _velocity_displacement_equation(speed: float, precision: int) -> str:
+    return f"|v|(s) = {format_scalar(speed, precision)}"
+
+
+def build_motion_intervals(
+    result: SimulationResult,
+    trajectory: list[TrajectorySample],
+) -> list[MotionInterval]:
+    """
+    Reconstruct piecewise motion intervals from trajectory samples and event history.
+    """
+    if len(trajectory) < 2:
+        return []
+
+    labels = sorted(result.initial_state.balls.keys())
+    cumulative_displacement = {label: 0.0 for label in labels}
+    intervals: list[MotionInterval] = []
+
+    for idx in range(len(trajectory) - 1):
+        start_sample = trajectory[idx]
+        end_sample = trajectory[idx + 1]
+
+        if idx == 0:
+            velocities = {
+                label: result.initial_state.balls[label].velocity.copy()
+                for label in labels
+            }
+        else:
+            velocities = {
+                label: result.events[idx - 1].post_velocities[label].copy()
+                for label in labels
+            }
+
+        displacement_start = dict(cumulative_displacement)
+        displacement_end: dict[str, float] = {}
+        start_positions = {
+            label: start_sample.positions[label].copy()
+            for label in labels
+        }
+        end_positions = {
+            label: end_sample.positions[label].copy()
+            for label in labels
+        }
+
+        for label in labels:
+            delta = end_positions[label] - start_positions[label]
+            cumulative_displacement[label] += float(np.linalg.norm(delta))
+            displacement_end[label] = cumulative_displacement[label]
+
+        intervals.append(
+            MotionInterval(
+                interval_index=idx + 1,
+                start_time=float(start_sample.time),
+                end_time=float(end_sample.time),
+                start_positions=start_positions,
+                end_positions=end_positions,
+                velocities=velocities,
+                displacement_start=displacement_start,
+                displacement_end=displacement_end,
+            )
+        )
+
+    return intervals
+
+
+def export_initial_conditions_csv(
+    result: SimulationResult,
+    filepath: str | Path,
+    precision: int = 4,
+) -> None:
+    """
+    Export a clearly labeled table of initial conditions for all balls.
+    """
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "ball_label",
+            "mass_kg",
+            "initial_position_x_m",
+            "initial_position_y_m",
+            "initial_position_xy_m",
+            "initial_position_vector_ij",
+            "initial_velocity_x_mps",
+            "initial_velocity_y_mps",
+            "initial_velocity_xy_mps",
+            "initial_velocity_vector_ij",
+            "initial_speed_mps",
+            "initial_momentum_vector_ij_kgmps",
+        ])
+
+        for label in sorted(result.initial_state.balls.keys()):
+            ball = result.initial_state.balls[label]
+            writer.writerow([
+                label,
+                format_scalar(ball.mass, 6),
+                format_scalar(ball.position[0], precision),
+                format_scalar(ball.position[1], precision),
+                format_vector_xy(ball.position, precision),
+                format_position_vector(ball.position, precision),
+                format_scalar(ball.velocity[0], precision),
+                format_scalar(ball.velocity[1], precision),
+                format_vector_xy(ball.velocity, precision),
+                format_velocity_vector(ball.velocity, precision),
+                format_scalar(_speed(ball.velocity), precision),
+                format_momentum_vector(ball.velocity, ball.mass, precision),
+            ])
+
+
 def export_event_table_csv(
     result: SimulationResult,
     filepath: str | Path,
     precision: int = 4,
 ) -> None:
     """
-    Export event history to CSV.
-
-    Includes:
-    - event number
-    - time
-    - event type
-    - actors
-    - collision position
-    - scalar impulse magnitude
-    - pre/post velocities for all balls
-    - per-ball impulse vectors
-    - average force vectors derived from the assumed contact duration
+    Export event history with clearer labels and explicit numeric columns.
     """
     path = Path(filepath)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -158,19 +313,22 @@ def export_event_table_csv(
         writer = csv.writer(f)
         writer.writerow([
             "event_number",
-            "time_s",
+            "event_time_s",
             "event_type",
-            "actors",
-            "position_xy_m",
-            "position_ij",
+            "actor_1",
+            "actor_2",
+            "collision_position_x_m",
+            "collision_position_y_m",
+            "collision_position_xy_m",
+            "collision_position_vector_ij",
             "impulse_magnitude_Ns",
-            "pre_velocities_xy_mps",
-            "pre_velocities_ij_mps",
-            "post_velocities_xy_mps",
-            "post_velocities_ij_mps",
+            "pre_collision_velocities_xy_mps",
+            "pre_collision_velocities_ij_mps",
+            "post_collision_velocities_xy_mps",
+            "post_collision_velocities_ij_mps",
             "impulse_vectors_xy_Ns",
             "impulse_vectors_ij_Ns",
-            "avg_force_vectors_ij_N",
+            "average_force_vectors_ij_N",
         ])
 
         for idx, event in enumerate(result.events, start=1):
@@ -178,7 +336,10 @@ def export_event_table_csv(
                 idx,
                 format_scalar(event.time, 6),
                 event.event_type,
-                str(event.actors),
+                event.actors[0],
+                event.actors[1],
+                format_scalar(event.position[0], precision),
+                format_scalar(event.position[1], precision),
                 format_vector_xy(event.position, precision),
                 format_position_vector(event.position, precision),
                 "" if event.impulse is None else format_scalar(event.impulse, 6),
@@ -199,11 +360,6 @@ def export_state_summary_csv(
 ) -> None:
     """
     Export initial and final state summaries for each ball.
-
-    Includes:
-    - initial/final positions
-    - initial/final velocities
-    - initial/final momenta
     """
     path = Path(filepath)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,18 +367,20 @@ def export_state_summary_csv(
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "ball",
-            "initial_position_xy_m",
-            "initial_position_ij",
-            "initial_velocity_xy_mps",
-            "initial_velocity_ij",
-            "initial_momentum_ij_kgmps",
-            "final_position_xy_m",
-            "final_position_ij",
-            "final_velocity_xy_mps",
-            "final_velocity_ij",
-            "final_momentum_ij_kgmps",
+            "ball_label",
             "mass_kg",
+            "initial_position_x_m",
+            "initial_position_y_m",
+            "initial_velocity_x_mps",
+            "initial_velocity_y_mps",
+            "initial_speed_mps",
+            "final_position_x_m",
+            "final_position_y_m",
+            "final_velocity_x_mps",
+            "final_velocity_y_mps",
+            "final_speed_mps",
+            "initial_momentum_vector_ij_kgmps",
+            "final_momentum_vector_ij_kgmps",
         ])
 
         for label in sorted(result.initial_state.balls.keys()):
@@ -231,27 +389,117 @@ def export_state_summary_csv(
 
             writer.writerow([
                 label,
-                format_vector_xy(initial_ball.position, precision),
-                format_position_vector(initial_ball.position, precision),
-                format_vector_xy(initial_ball.velocity, precision),
-                format_velocity_vector(initial_ball.velocity, precision),
-                format_momentum_vector(initial_ball.velocity, initial_ball.mass, precision),
-                format_vector_xy(final_ball.position, precision),
-                format_position_vector(final_ball.position, precision),
-                format_vector_xy(final_ball.velocity, precision),
-                format_velocity_vector(final_ball.velocity, precision),
-                format_momentum_vector(final_ball.velocity, final_ball.mass, precision),
                 format_scalar(initial_ball.mass, 6),
+                format_scalar(initial_ball.position[0], precision),
+                format_scalar(initial_ball.position[1], precision),
+                format_scalar(initial_ball.velocity[0], precision),
+                format_scalar(initial_ball.velocity[1], precision),
+                format_scalar(_speed(initial_ball.velocity), precision),
+                format_scalar(final_ball.position[0], precision),
+                format_scalar(final_ball.position[1], precision),
+                format_scalar(final_ball.velocity[0], precision),
+                format_scalar(final_ball.velocity[1], precision),
+                format_scalar(_speed(final_ball.velocity), precision),
+                format_momentum_vector(initial_ball.velocity, initial_ball.mass, precision),
+                format_momentum_vector(final_ball.velocity, final_ball.mass, precision),
             ])
 
 
-def export_initial_conditions_csv(
+def export_motion_intervals_csv(
+    result: SimulationResult,
+    trajectory: list[TrajectorySample],
+    filepath: str | Path,
+    precision: int = 4,
+) -> None:
+    """
+    Export one row per ball per interval with piecewise equations.
+    """
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    intervals = build_motion_intervals(result, trajectory)
+
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "interval_number",
+            "ball_label",
+            "time_start_s",
+            "time_end_s",
+            "duration_s",
+            "start_position_x_m",
+            "start_position_y_m",
+            "end_position_x_m",
+            "end_position_y_m",
+            "velocity_x_mps",
+            "velocity_y_mps",
+            "speed_mps",
+            "path_displacement_start_m",
+            "path_displacement_end_m",
+            "x_of_t_equation",
+            "y_of_t_equation",
+            "position_vector_equation",
+            "vx_of_t_equation",
+            "vy_of_t_equation",
+            "speed_of_t_equation",
+            "speed_of_displacement_equation",
+        ])
+
+        for interval in intervals:
+            for label in sorted(interval.start_positions.keys()):
+                start_position = interval.start_positions[label]
+                end_position = interval.end_positions[label]
+                velocity = interval.velocities[label]
+                speed = _speed(velocity)
+                writer.writerow([
+                    interval.interval_index,
+                    label,
+                    format_scalar(interval.start_time, 6),
+                    format_scalar(interval.end_time, 6),
+                    format_scalar(interval.duration, 6),
+                    format_scalar(start_position[0], precision),
+                    format_scalar(start_position[1], precision),
+                    format_scalar(end_position[0], precision),
+                    format_scalar(end_position[1], precision),
+                    format_scalar(velocity[0], precision),
+                    format_scalar(velocity[1], precision),
+                    format_scalar(speed, precision),
+                    format_scalar(interval.displacement_start[label], precision),
+                    format_scalar(interval.displacement_end[label], precision),
+                    _coordinate_equation(
+                        "x",
+                        start_position[0],
+                        velocity[0],
+                        interval.start_time,
+                        precision,
+                    ),
+                    _coordinate_equation(
+                        "y",
+                        start_position[1],
+                        velocity[1],
+                        interval.start_time,
+                        precision,
+                    ),
+                    _position_equation(
+                        start_position,
+                        velocity,
+                        interval.start_time,
+                        precision,
+                    ),
+                    _velocity_equation("v_x", velocity[0], precision),
+                    _velocity_equation("v_y", velocity[1], precision),
+                    _speed_equation(speed, precision),
+                    _velocity_displacement_equation(speed, precision),
+                ])
+
+
+def export_collision_forces_csv(
     result: SimulationResult,
     filepath: str | Path,
     precision: int = 4,
 ) -> None:
     """
-    Export a compact table of only the initial conditions of all balls.
+    Export the impulse and average-force list for each body involved in each collision.
     """
     path = Path(filepath)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,26 +507,45 @@ def export_initial_conditions_csv(
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "ball",
-            "initial_position_xy_m",
-            "initial_position_ij",
-            "initial_velocity_xy_mps",
-            "initial_velocity_ij",
-            "initial_momentum_ij_kgmps",
-            "mass_kg",
+            "event_number",
+            "event_time_s",
+            "event_type",
+            "actor_1",
+            "actor_2",
+            "body_label",
+            "impulse_x_Ns",
+            "impulse_y_Ns",
+            "impulse_vector_xy_Ns",
+            "impulse_vector_ij_Ns",
+            "impulse_magnitude_Ns",
+            "assumed_contact_duration_s",
+            "average_force_x_N",
+            "average_force_y_N",
+            "average_force_vector_ij_N",
+            "average_force_magnitude_N",
         ])
 
-        for label in sorted(result.initial_state.balls.keys()):
-            ball = result.initial_state.balls[label]
-            writer.writerow([
-                label,
-                format_vector_xy(ball.position, precision),
-                format_position_vector(ball.position, precision),
-                format_vector_xy(ball.velocity, precision),
-                format_velocity_vector(ball.velocity, precision),
-                format_momentum_vector(ball.velocity, ball.mass, precision),
-                format_scalar(ball.mass, 6),
-            ])
+        for idx, event in enumerate(result.events, start=1):
+            for body_label, impulse_vector in sorted(event.impulse_vectors.items()):
+                average_force = impulse_vector / CONTACT_DURATION_S
+                writer.writerow([
+                    idx,
+                    format_scalar(event.time, 6),
+                    event.event_type,
+                    event.actors[0],
+                    event.actors[1],
+                    body_label,
+                    format_scalar(impulse_vector[0], precision),
+                    format_scalar(impulse_vector[1], precision),
+                    format_vector_xy(impulse_vector, precision),
+                    format_impulse_vector(impulse_vector, precision),
+                    format_scalar(np.linalg.norm(impulse_vector), 6),
+                    format_scalar(CONTACT_DURATION_S, 6),
+                    format_scalar(average_force[0], precision),
+                    format_scalar(average_force[1], precision),
+                    format_force_vector_from_impulse(impulse_vector, CONTACT_DURATION_S, precision),
+                    format_scalar(np.linalg.norm(average_force), 6),
+                ])
 
 
 def export_assignment_summary_csv(
@@ -306,7 +573,9 @@ def export_assignment_summary_csv(
             "C_wall_hits",
             "all_balls_hit_wall",
             "event_count",
+            "success_time_s",
             "final_time_s",
+            "display_end_time_s",
         ])
         writer.writerow([
             result.success,
@@ -319,44 +588,51 @@ def export_assignment_summary_csv(
             status.wall_hits["C"],
             status.all_balls_hit_wall,
             len(result.events),
+            "" if result.success_time is None else result.success_time,
             result.final_state.time,
+            "" if result.display_end_time is None else result.display_end_time,
         ])
 
 
 def export_case_bundle(
     result: SimulationResult,
-    stem: str | Path,
+    trajectory: list[TrajectorySample],
+    output_dir: str | Path,
     precision: int = 4,
 ) -> None:
     """
-    Export all CSV outputs for one case.
-
-    Example
-    -------
-    stem='outputs/tables/direct'
-    produces:
-    - outputs/tables/direct_initial_conditions.csv
-    - outputs/tables/direct_events.csv
-    - outputs/tables/direct_states.csv
-    - outputs/tables/direct_summary.csv
+    Export all CSV outputs for one case into a dedicated directory.
     """
-    stem_path = Path(stem)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
     export_initial_conditions_csv(
         result,
-        stem_path.with_name(f"{stem_path.name}_initial_conditions.csv"),
+        output_path / "01_initial_conditions.csv",
+        precision,
+    )
+    export_motion_intervals_csv(
+        result,
+        trajectory,
+        output_path / "02_motion_intervals.csv",
         precision,
     )
     export_event_table_csv(
         result,
-        stem_path.with_name(f"{stem_path.name}_events.csv"),
+        output_path / "03_collision_events.csv",
+        precision,
+    )
+    export_collision_forces_csv(
+        result,
+        output_path / "04_collision_forces.csv",
         precision,
     )
     export_state_summary_csv(
         result,
-        stem_path.with_name(f"{stem_path.name}_states.csv"),
+        output_path / "05_state_summary.csv",
         precision,
     )
     export_assignment_summary_csv(
         result,
-        stem_path.with_name(f"{stem_path.name}_summary.csv"),
+        output_path / "06_assignment_summary.csv",
     )
