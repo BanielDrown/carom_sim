@@ -8,17 +8,16 @@ from pathlib import Path
 
 import matplotlib.animation as mpl_animation
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 import numpy as np
 from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
 
-from carom.io_utils import format_scalar, format_vector_sum
+from carom.io_utils import format_scalar
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
 from carom.validation import first_success_event_index
 
 
-BALL_COLORS = {
+BALL_FACE_COLORS = {
     "A": "red",
     "B": "blue",
     "C": "white",
@@ -40,30 +39,21 @@ VECTOR_EPS = 1e-12
 STANDARD_ARROW_FRACTION = 0.09
 
 
-def _high_visibility_path_effects(
-    outer_width: float = 5.0,
-    inner_width: float = 3.0,
-) -> list:
-    """
-    Return a stacked white/black outline effect for visibility on any background.
-    """
-    return [
-        pe.Stroke(linewidth=outer_width, foreground="white"),
-        pe.Stroke(linewidth=inner_width, foreground="black"),
-        pe.Normal(),
-    ]
-
-
-def _arrow_visibility_path_effects() -> list:
-    return _high_visibility_path_effects(outer_width=5.4, inner_width=3.6)
-
-
-def _text_visibility_path_effects() -> list:
-    return _high_visibility_path_effects(outer_width=4.0, inner_width=2.2)
-
-
 def _ball_text_color(facecolor: str) -> str:
     return "black" if facecolor == "white" else "white"
+
+
+def _label_box() -> dict:
+    """
+    Shared lightweight box styling for animation metadata.
+    """
+    return {
+        "boxstyle": "round,pad=0.18",
+        "facecolor": "white",
+        "edgecolor": "#c8c8c8",
+        "linewidth": 0.6,
+        "alpha": 0.88,
+    }
 
 
 def _line_equation_from_point_direction(
@@ -364,13 +354,12 @@ def _draw_momentum_arrow(
         posA=(float(tail[0]), float(tail[1])),
         posB=(float(tail[0] + dx), float(tail[1] + dy)),
         arrowstyle="-|>",
-        mutation_scale=14,
-        linewidth=2.0,
+        mutation_scale=10,
+        linewidth=1.4,
         color=color,
-        alpha=0.92,
+        alpha=0.72,
         zorder=5,
     )
-    arrow.set_path_effects(_arrow_visibility_path_effects())
     ax.add_patch(arrow)
     return arrow
 
@@ -401,13 +390,12 @@ def _draw_impulse_pair(
             posA=(float(tail[0]), float(tail[1])),
             posB=(float(tail[0] + delta[0]), float(tail[1] + delta[1])),
             arrowstyle="-|>",
-            mutation_scale=12,
+            mutation_scale=10,
             color=color,
-            linewidth=2.0,
-            alpha=0.88,
+            linewidth=1.35,
+            alpha=0.70,
             zorder=8,
         )
-        arrow.set_path_effects(_arrow_visibility_path_effects())
         ax.add_patch(arrow)
         arrows.append(arrow)
 
@@ -439,12 +427,11 @@ def _draw_collision_line(
         [float(start[0]), float(end[0])],
         [float(start[1]), float(end[1])],
         linestyle=":",
-        linewidth=1.5,
+        linewidth=1.0,
         color=color,
-        alpha=0.55,
+        alpha=0.32,
         zorder=2,
     )
-    line.set_path_effects(_high_visibility_path_effects(4.0, 2.0))
     return line
 
 
@@ -514,10 +501,9 @@ def animate_trajectory(
         table.length,
         table.width,
         fill=False,
-        linewidth=2.0,
-        edgecolor="black",
+        linewidth=1.2,
+        edgecolor="#4f4f4f",
     )
-    table_patch.set_path_effects(_high_visibility_path_effects(outer_width=5.0, inner_width=3.0))
     ax.add_patch(table_patch)
     ax.grid(True, alpha=0.18, linestyle=":")
 
@@ -536,7 +522,7 @@ def animate_trajectory(
         pos = first_sample.positions[label]
         color = BALL_TRACE_COLORS.get(label, "gray")
         line_style = "-" if label == "C" else "--"
-        line_width = 2.8 if label == "C" else 2.0
+        line_width = 2.2 if label == "C" else 1.6
 
         (trace_line,) = ax.plot(
             [float(pos[0])],
@@ -544,22 +530,20 @@ def animate_trajectory(
             linestyle=line_style,
             linewidth=line_width,
             color=color,
-            alpha=0.92,
+            alpha=0.84,
             label=BALL_NAMES.get(label, label),
             zorder=1,
         )
-        trace_line.set_path_effects(_high_visibility_path_effects(4.2, 2.6))
         trace_lines[label] = trace_line
 
         patch = Circle(
             (float(pos[0]), float(pos[1])),
             radius=radius,
-            facecolor=BALL_COLORS.get(label, "gray"),
+            facecolor=BALL_FACE_COLORS.get(label, "gray"),
             edgecolor="black",
-            linewidth=2.0,
+            linewidth=1.0,
             zorder=4,
         )
-        patch.set_path_effects(_high_visibility_path_effects(outer_width=4.6, inner_width=2.8))
         ax.add_patch(patch)
         ball_patches[label] = patch
 
@@ -568,13 +552,12 @@ def animate_trajectory(
             float(pos[1]),
             label,
             fontsize=10,
-            weight="bold",
-            color=_ball_text_color(BALL_COLORS.get(label, "gray")),
+            weight="normal",
+            color=_ball_text_color(BALL_FACE_COLORS.get(label, "gray")),
             ha="center",
             va="center",
             zorder=5,
         )
-        text.set_path_effects(_text_visibility_path_effects())
         ball_labels[label] = text
 
         momentum_artists[label] = None
@@ -617,25 +600,14 @@ def animate_trajectory(
             )
 
             label_artist = ax.text(
-                float(anchor[0] + 0.03),
-                float(anchor[1] + 0.03),
-                (
-                    f"|J| = {format_scalar(float(np.linalg.norm(impulse_vec)), 4)} N·s\n"
-                    f"J = {format_vector_sum(impulse_vec, 'i', 'j')}\n"
-                    f"line: {_line_equation_from_point_direction(anchor, event.collision_normal)}"
-                ),
-                fontsize=8.5,
-                color="black",
-                bbox={
-                    "boxstyle": "round,pad=0.18",
-                    "facecolor": "white",
-                    "edgecolor": "black",
-                    "linewidth": 0.8,
-                    "alpha": 0.90,
-                },
+                float(anchor[0] + 0.025),
+                float(anchor[1] + 0.025),
+                f"|J|={format_scalar(float(np.linalg.norm(impulse_vec)), 3)}",
+                fontsize=7.0,
+                color="#333333",
+                bbox=_label_box(),
                 zorder=9,
             )
-            label_artist.set_path_effects(_text_visibility_path_effects())
             event_artists.append(label_artist)
 
             for artist in event_artists:
@@ -644,7 +616,8 @@ def animate_trajectory(
             impulse_events.append(event)
             impulse_artists_by_event.append(event_artists)
 
-    legend = ax.legend(loc="upper left", framealpha=0.95)
+    legend = ax.legend(loc="upper left", framealpha=0.88)
+    legend.get_frame().set_edgecolor("#c8c8c8")
     legend.set_zorder(12)
 
     status_text = ax.text(
@@ -652,19 +625,12 @@ def animate_trajectory(
         0.99,
         "",
         transform=ax.transAxes,
-        fontsize=9.5,
+        fontsize=8.5,
         ha="right",
         va="top",
-        bbox={
-            "boxstyle": "round,pad=0.18",
-            "facecolor": "white",
-            "edgecolor": "black",
-            "linewidth": 0.8,
-            "alpha": 0.90,
-        },
+        bbox=_label_box(),
         zorder=12,
     )
-    status_text.set_path_effects(_text_visibility_path_effects())
 
     def update(frame_idx: int):
         sample = frames[frame_idx]
@@ -698,7 +664,7 @@ def animate_trajectory(
                     velocity=velocity,
                     mass=mass,
                     radius=radius,
-                    color=BALL_COLORS.get(label, "gray"),
+                    color=BALL_FACE_COLORS.get(label, "gray"),
                     scale=pscale,
                 )
 
@@ -828,39 +794,36 @@ def export_animation_frame_snapshots(
             table.length,
             table.width,
             fill=False,
-            linewidth=2.0,
-            edgecolor="black",
+            linewidth=1.2,
+            edgecolor="#4f4f4f",
         )
-        table_patch.set_path_effects(_high_visibility_path_effects(outer_width=5.0, inner_width=3.0))
         ax.add_patch(table_patch)
 
         for label, path in sampled_paths.items():
             history = path[: frame_idx + 1]
             color = BALL_TRACE_COLORS.get(label, "gray")
             style = "-" if label == "C" else "--"
-            width = 2.8 if label == "C" else 2.0
+            width = 2.2 if label == "C" else 1.6
             (line,) = ax.plot(
                 history[:, 0],
                 history[:, 1],
                 linestyle=style,
                 linewidth=width,
                 color=color,
-                alpha=0.92,
+                alpha=0.84,
                 label=BALL_NAMES.get(label, label),
                 zorder=1,
             )
-            line.set_path_effects(_high_visibility_path_effects(4.2, 2.6))
 
             pos = sample.positions[label]
             ball = Circle(
                 (float(pos[0]), float(pos[1])),
                 radius=radius,
-                facecolor=BALL_COLORS.get(label, "gray"),
+                facecolor=BALL_FACE_COLORS.get(label, "gray"),
                 edgecolor="black",
-                linewidth=2.0,
+                linewidth=1.0,
                 zorder=4,
             )
-            ball.set_path_effects(_high_visibility_path_effects(outer_width=4.6, inner_width=2.8))
             ax.add_patch(ball)
 
             text = ax.text(
@@ -868,13 +831,12 @@ def export_animation_frame_snapshots(
                 float(pos[1]),
                 label,
                 fontsize=10,
-                weight="bold",
-                color=_ball_text_color(BALL_COLORS.get(label, "gray")),
+                weight="normal",
+                color=_ball_text_color(BALL_FACE_COLORS.get(label, "gray")),
                 ha="center",
                 va="center",
                 zorder=5,
             )
-            text.set_path_effects(_text_visibility_path_effects())
 
         for event in visible_events:
             if event.time > sample.time:
@@ -893,27 +855,17 @@ def export_animation_frame_snapshots(
                 arrow_length,
             )
             note = ax.text(
-                float(anchor[0] + 0.03),
-                float(anchor[1] + 0.03),
-                (
-                    f"|J| = {format_scalar(float(np.linalg.norm(impulse_vec)), 4)} N·s\n"
-                    f"J = {format_vector_sum(impulse_vec, 'i', 'j')}\n"
-                    f"line: {_line_equation_from_point_direction(anchor, event.collision_normal)}"
-                ),
-                fontsize=8,
-                color="black",
-                bbox={
-                    "boxstyle": "round,pad=0.18",
-                    "facecolor": "white",
-                    "edgecolor": "black",
-                    "linewidth": 0.8,
-                    "alpha": 0.90,
-                },
+                float(anchor[0] + 0.025),
+                float(anchor[1] + 0.025),
+                f"|J|={format_scalar(float(np.linalg.norm(impulse_vec)), 3)}",
+                fontsize=7.0,
+                color="#333333",
+                bbox=_label_box(),
                 zorder=9,
             )
-            note.set_path_effects(_text_visibility_path_effects())
 
-        legend = ax.legend(loc="upper left", framealpha=0.95)
+        legend = ax.legend(loc="upper left", framealpha=0.88)
+        legend.get_frame().set_edgecolor("#c8c8c8")
         legend.set_zorder(12)
 
     save_target = Path(save_path)

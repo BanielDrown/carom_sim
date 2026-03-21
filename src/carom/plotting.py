@@ -7,12 +7,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 import numpy as np
 from matplotlib.patches import FancyArrowPatch, Rectangle
 
 from carom.constants import NORMALIZED_VECTOR_LENGTH_M
-from carom.io_utils import build_motion_intervals, format_scalar, format_vector_sum
+from carom.io_utils import build_motion_intervals, format_scalar
 from carom.physics import wall_normal_from_name
 from carom.state import CollisionEvent, SimulationResult, Table, TrajectorySample
 from carom.validation import first_success_event_index
@@ -37,20 +36,6 @@ BALL_NAMES = {
 }
 
 VECTOR_EPS = 1e-12
-
-
-def _high_visibility_path_effects(
-    outer_width: float = 4.8,
-    inner_width: float = 2.8,
-) -> list:
-    """
-    Return a white/black outline stack that keeps artists legible.
-    """
-    return [
-        pe.Stroke(linewidth=outer_width, foreground="white"),
-        pe.Stroke(linewidth=inner_width, foreground="black"),
-        pe.Normal(),
-    ]
 
 
 def _ball_text_color(facecolor: str) -> str:
@@ -249,14 +234,14 @@ def _clip_to_table(point: np.ndarray, table: Table, margin: float) -> np.ndarray
 
 def _label_box() -> dict:
     """
-    Shared label box styling for readability.
+    Shared label box styling for lightweight readability.
     """
     return {
         "boxstyle": "round,pad=0.18",
         "facecolor": "white",
-        "edgecolor": "black",
-        "linewidth": 0.8,
-        "alpha": 0.90,
+        "edgecolor": "#c8c8c8",
+        "linewidth": 0.6,
+        "alpha": 0.88,
     }
 
 
@@ -313,9 +298,9 @@ def _draw_collision_line(
         [float(start[0]), float(end[0])],
         [float(start[1]), float(end[1])],
         linestyle=":",
-        linewidth=1.5,
+        linewidth=1.0,
         color=color,
-        alpha=0.55,
+        alpha=0.32,
         zorder=1.5,
     )
 
@@ -345,13 +330,12 @@ def _draw_impulse_pair(
             posA=(float(tail[0]), float(tail[1])),
             posB=(float(tail[0] + delta[0]), float(tail[1] + delta[1])),
             arrowstyle="-|>",
-            mutation_scale=12,
-            linewidth=2.1,
+            mutation_scale=10,
+            linewidth=1.35,
             color=color,
-            alpha=0.90,
+            alpha=0.72,
             zorder=2,
         )
-        arrow.set_path_effects(_high_visibility_path_effects(4.4, 2.8))
         ax.add_patch(arrow)
 
 
@@ -377,13 +361,12 @@ def _draw_single_impulse_arrow(
         posA=(float(tail[0]), float(tail[1])),
         posB=(float(head[0]), float(head[1])),
         arrowstyle="-|>",
-        mutation_scale=12,
-        linewidth=2.1,
+        mutation_scale=10,
+        linewidth=1.35,
         color=color,
-        alpha=0.90,
+        alpha=0.72,
         zorder=2,
     )
-    arrow.set_path_effects(_high_visibility_path_effects(4.4, 2.8))
     ax.add_patch(arrow)
 
 
@@ -407,18 +390,16 @@ def _draw_impulse_label(
         float(label_position[0]),
         float(label_position[1]),
         (
-            f"|J| = {format_scalar(float(np.linalg.norm(impulse_vec)), 4)} N·s\n"
-            f"J = {format_vector_sum(impulse_vec, 'i', 'j')}\n"
-            f"line: {collision_line_text}"
+            f"|J| = {format_scalar(float(np.linalg.norm(impulse_vec)), 4)} N·s"
+            + (f"\n{collision_line_text}" if collision_line_text else "")
         ),
-        fontsize=8.5,
-        color="black",
+        fontsize=7.5,
+        color="#222222",
         ha="left",
         va="center",
         bbox=_label_box(),
         zorder=6,
     )
-    label.set_path_effects(_high_visibility_path_effects(3.6, 2.0))
 
 
 def _draw_ball_marker(
@@ -437,11 +418,10 @@ def _draw_ball_marker(
         radius=radius,
         facecolor=facecolor,
         edgecolor="black",
-        linewidth=1.6,
+        linewidth=1.0,
         alpha=alpha,
         zorder=5,
     )
-    ball.set_path_effects(_high_visibility_path_effects(4.0, 2.2))
     ax.add_patch(ball)
 
     label = ax.text(
@@ -455,7 +435,6 @@ def _draw_ball_marker(
         color=_ball_text_color(facecolor),
         zorder=6,
     )
-    label.set_path_effects(_high_visibility_path_effects(2.6, 1.5))
 
 
 def _draw_direction_arrow(
@@ -481,13 +460,12 @@ def _draw_direction_arrow(
         posA=(float(origin[0]), float(origin[1])),
         posB=(float(origin[0] + scaled[0]), float(origin[1] + scaled[1])),
         arrowstyle="-|>",
-        mutation_scale=12,
-        linewidth=1.8,
+        mutation_scale=10,
+        linewidth=1.35,
         color=color,
-        alpha=0.85,
+        alpha=0.70,
         zorder=2,
     )
-    arrow.set_path_effects(_high_visibility_path_effects(4.0, 2.3))
     ax.add_patch(arrow)
 
     text_origin = origin + scaled + _annotation_offsets(table)[offset_index % len(_annotation_offsets(table))] * 0.35
@@ -503,7 +481,6 @@ def _draw_direction_arrow(
         bbox=_label_box(),
         zorder=6,
     )
-    text.set_path_effects(_high_visibility_path_effects(3.2, 1.8))
 
 
 def plot_trajectories(
@@ -548,8 +525,8 @@ def plot_trajectories(
         (0.0, 0.0),
         table.length,
         table.width,
-        linewidth=1.8,
-        edgecolor="black",
+        linewidth=1.2,
+        edgecolor="#4f4f4f",
         facecolor="none",
         zorder=0,
     )
@@ -580,7 +557,7 @@ def plot_trajectories(
             continue
 
         color = BALL_TRACE_COLORS.get(label, "gray")
-        line_width = 2.8 if label == "C" else 2.0
+        line_width = 2.2 if label == "C" else 1.6
         line_style = "-" if label == "C" else "--"
 
         ax.plot(
@@ -589,11 +566,10 @@ def plot_trajectories(
             linestyle=line_style,
             linewidth=line_width,
             color=color,
-            alpha=0.92,
+            alpha=0.84,
             label=BALL_NAMES.get(label, label),
             zorder=1,
         )
-        ax.lines[-1].set_path_effects(_high_visibility_path_effects(4.2, 2.6))
 
         start = path_array[0]
         end = path_array[-1]
@@ -676,22 +652,21 @@ def plot_trajectories(
 
     ax.set_title("Carom Simulation Trajectories", fontsize=16, weight="normal", pad=14)
     header_artist = ax.text(
-        0.01,
+        0.99,
         0.99,
         header,
         transform=ax.transAxes,
-        fontsize=9,
+        fontsize=8.5,
         va="top",
-        ha="left",
+        ha="right",
         bbox=_label_box(),
         zorder=10,
     )
-    header_artist.set_path_effects(_high_visibility_path_effects(3.6, 2.0))
 
     if debug:
         status = result.assignment_status
         status_text = ax.text(
-            0.01,
+            0.99,
             0.91,
             (
                 f"cue_contacts={sorted(status.cue_contacts)} | "
@@ -702,14 +677,15 @@ def plot_trajectories(
                 f"n_events={len(plotted_events)}"
             ),
             transform=ax.transAxes,
-            fontsize=9,
+            fontsize=8.5,
             va="top",
+            ha="right",
             bbox=_label_box(),
         )
-        status_text.set_path_effects(_high_visibility_path_effects(3.6, 2.0))
 
     ax.grid(True, alpha=0.18, linestyle=":")
-    legend = ax.legend(loc="upper left", framealpha=0.95)
+    legend = ax.legend(loc="upper left", framealpha=0.88)
+    legend.get_frame().set_edgecolor("#c8c8c8")
     legend.set_zorder(12)
 
     _save_or_show(fig, save_path)
